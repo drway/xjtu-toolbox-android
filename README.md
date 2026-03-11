@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Android-green?logo=android" />
   <img src="https://img.shields.io/badge/minSdk-31_(Android_12)-blue" />
-  <img src="https://img.shields.io/badge/version-2.8.0-orange" />
+  <img src="https://img.shields.io/badge/version-2.8.1-orange" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" />
 </p>
 
@@ -17,18 +17,17 @@
 |------|------|
 | 🔐 统一认证 | CAS 登录（RSA + MFA 手机验证码）+ WebVPN 自动切换 |
 | 📅 课表 | 周视图 + 考试安排 + 教材信息 + 桌面小组件（2×2 / 4×2）|
-| 📊 成绩 | JWAPP 正式成绩 + FineReport 报表绕过评教限制 + GPA 计算 |
+| 📊 成绩 | JWAPP 正式成绩 + FineReport 报表 + GPA 计算 |
 | ✅ 考勤 | 全 20 周出勤流水，正常/迟到/缺勤统计 |
 | 🏫 空闲教室 | 节次筛选，CDN 公开数据，无需登录和校园网 |
-| 💳 校园卡 | 余额 + 账单流水 + 月度消费图表 |
-| 📚 图书馆 | 在座/预约状态 + 续座/签退 |
+| 💳 校园卡 | 余额 + 账单流水 + 智能洞察 |
+| 📚 图书馆 | 在座/预约状态 + 空闲座位推荐/签退 |
 | 🔍 全校课表 | 按课程名、教师、院系、校区、节次等多维度检索全校开课信息 |
 | 📢 通知公告 | 一网通办 + 各学院通知多源聚合 |
 | 🎓 课程回放 | TronClass 多机位视频播放 + 课件下载 |
 | 📖 思源学堂 | 活动详情、作业与评分、课件、直播流 |
 | 👤 个人信息 | NSA OAuth2，包含 16 项详细信息 |
 | ✏️ 评教 | GSTE + 常规评教一键完成 |
-| 🌐 内置浏览器 | WebView 自动注入 Cookie + WebVPN 透明代理 |
 
 ---
 
@@ -77,8 +76,8 @@ app/src/main/java/com/xjtu/toolbox/
 项目配置了 GitHub Actions：push/PR 到 `main` 自动编译 Debug，推送 `v*` tag 自动打包 Release 并发布到 GitHub Releases。
 
 ```bash
-git tag v2.7.1
-git push origin v2.7.1
+git tag v2.8.1
+git push origin v2.8.1
 # Actions 自动构建并发布
 ```
 
@@ -87,65 +86,17 @@ git push origin v2.7.1
 ## 注意事项
 
 - 考勤、图书馆等服务仅限校内网络，应用会自动识别并切换到 WebVPN
-- 校园卡（`card.xjtu.edu.cn`）是公网服务，不走 WebVPN
 - 空闲教室数据来自公开 CDN，不需要登录
-- AGP 9.0 已内置 Kotlin 支持，**不要**额外添加 `org.jetbrains.kotlin.android` 插件
 - `network_security_config.xml` 允许 XJTU 子域名的 cleartext HTTP
-
----
-
-## 更新日志
-
-### v2.8.0
-
-- 新增校园卡桌面小组件（4×2）：余额、今日消费及早/午/晚三餐明细
-- 应用内更新：直接下载并安装新版 APK，基于 Gitee Releases
-- 首页新增"校历"入口
-- 课表小组件 MIUIX 风格优化：去除描边、16dp 圆角、课程名称与时间上下排列
-- 修复所有小组件崩溃/无法添加问题（RemoteViews XML 兼容性 + exported 属性）
-- "关于"页优化：应用信息行改为 GitHub 源代码仓库链接，移除冗余行
-
-### v2.7.1
-
-- 新增课表桌面小组件，2×2 和 4×2 两种规格，支持当日课程一览
-- 修复小组件布局与数据加载问题
-- APK 签名由 v2 升级为 v2+v3
-- **已知问题**：图书馆换座功能暂时无效；入馆后可能错误显示「取消预约」按钮
-
-### v2.7.0
-
-- 新增全校课表查询，支持按课程名、课号、教师、院系、校区、节次等多维度筛选
-- 首页 / 教务 / 工具 Tab 重新分区
-- "我的"页全面重构，新增关于区域、GitHub Issues 反馈入口
-- 成绩查询页 GPA 卡片上方增加数据仅供参考声明
-- 修复思源学堂视频横屏切换时 Activity 反复重建导致 ExoPlayer 无法初始化的问题
-- 修复全校课表 API null-safe 解析异常
-
-### v2.6.0
-
-- 新增思源学堂（LMS），支持课程活动、作业评分、课件下载
-- 新增课程回放，支持多机位视频与双画面模式、倍速、下载
-
-### v2.5.x
-
-- 新增 TronClass 课程回放和体育场馆预订
-- 修复返回键直接回桌面的严重 Bug
-- 移除存在风险的定时抢座功能
-
-### v2.0.0
-
-- NSA OAuth2 接入，获取 16 项个人信息，本地缓存
-- EULA 首次启动弹窗，版本升级重新确认
-- 版本更新公告弹窗
 
 ---
 
 ## 开发计划
 
 - 图书馆座位智能推荐
-- 通知订阅 & Push
-- 智能选课助手
-- 电子教材在线阅读
+- 个人/教务通知订阅 & Push
+- 选课助手/方案管理
+- 电子教材
 
 ---
 
