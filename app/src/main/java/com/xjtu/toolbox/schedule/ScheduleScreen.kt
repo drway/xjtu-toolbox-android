@@ -12,6 +12,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
+import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
@@ -19,6 +20,8 @@ import top.yukonga.miuix.kmp.extra.SuperBottomSheet
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.clickable
@@ -53,6 +56,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,7 +79,12 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 @Composable
-fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () -> Unit) {
+fun ScheduleScreen(
+    login: JwxtLogin? = null,
+    studentId: String = "",
+    onBack: () -> Unit = {},
+    showTopBar: Boolean = true
+) {
     val api = remember(login) { login?.let { ScheduleApi(it) } }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -98,6 +107,7 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
     var textbooksLoaded by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
     var isSwitching by remember { mutableStateOf(false) }  // 学期切换中（保留旧课表显示）
+    var isRefreshingFromNetwork by remember { mutableStateOf(false) } // 缓存已显示，后台刷新中
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var currentWeek by rememberSaveable { mutableIntStateOf(1) }
     var realCurrentWeek by remember { mutableIntStateOf(0) }  // 实际当前周（0=未知），用于时间线显示判断
@@ -126,6 +136,7 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
     // 初始加载
     fun loadInitialData() {
         isLoading = true
+        isRefreshingFromNetwork = false
         errorMessage = null
         showingStaleData = false
         scope.launch {
@@ -207,6 +218,12 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
                             val parsed = gson.fromJson(cachedCourses, Array<CourseItem>::class.java).toList()
                             courses = parsed
                             cachedCoursesSize = parsed.size
+                            if (parsed.isNotEmpty()) {
+                                // 先展示缓存，随后后台轻量刷新
+                                isLoading = false
+                                isRefreshingFromNetwork = true
+                                showingStaleData = true
+                            }
                             android.util.Log.d("ScheduleUI", "Loaded courses from cache: ${parsed.size}")
                         } catch (_: Exception) { cachedCoursesSize = -1 }
                     } else { cachedCoursesSize = -1 }
@@ -235,6 +252,7 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
                             courses = freshCourses
                             exams = freshExams
                             showingStaleData = false
+                            isRefreshingFromNetwork = false
                             if (fetchedTermList.isNotEmpty()) {
                                 termList = fetchedTermList
                                 // 缓存学期列表（离线时使用）
@@ -288,6 +306,7 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
                     } catch (e: Exception) {
                         if (courses.isNotEmpty()) {
                             showingStaleData = true
+                            isRefreshingFromNetwork = false
                             // 离线时也尝试加载缓存的学期列表
                             if (termList.isEmpty()) {
                                 val cachedTermList = dataCache.get("schedule_term_list", Long.MAX_VALUE)
@@ -333,6 +352,7 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
                             }
                             if (courses.isNotEmpty()) {
                                 showingStaleData = true
+                                isRefreshingFromNetwork = false
                                 scope.launch { snackbarHostState.showSnackbar("网络异常 · 显示缓存课表", duration = SnackbarDuration.Long) }
                             } else {
                                 throw RuntimeException("网络不可用且无缓存数据，请连网后重试")
@@ -346,6 +366,7 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
                 errorMessage = "加载失败: ${e.message}"
             } finally {
                 isLoading = false
+                isRefreshingFromNetwork = false
                 ScheduleWidgetUpdater.requestUpdate(context)
             }
         }
@@ -380,6 +401,17 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
 
     LaunchedEffect(Unit) {
         android.util.Log.d("ScheduleUI", "ScheduleScreen entered: studentId='$studentId', online=${api != null}")
+        loadInitialData()
+    }
+
+    // 小组件/首页进入课程页时，可能先以离线缓存态渲染；
+    // 当 JWXT 登录稍后恢复成功后，自动切换为在线刷新，避免长期停留离线视图。
+    LaunchedEffect(login) {
+        if (login == null) return@LaunchedEffect
+        if (isLoading || isSwitching) return@LaunchedEffect
+        if (!showingStaleData && errorMessage == null && courses.isNotEmpty()) return@LaunchedEffect
+
+        android.util.Log.d("ScheduleUI", "Login became available, refreshing schedule online")
         loadInitialData()
     }
 
@@ -541,116 +573,187 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            AppTopBar(
-                color = MiuixTheme.colorScheme.surfaceVariant,
-                title = {
-                    // 学期选择下拉
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .clickable { if (termList.isNotEmpty()) termDropdownExpanded = true }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                if (selectedTermCode.isNotEmpty()) selectedTermCode else "课表 · 考试",
-                                style = MiuixTheme.textStyles.subtitle,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (termList.isNotEmpty()) {
-                                Icon(Icons.Default.ArrowDropDown, null, Modifier.size(20.dp))
+            if (showTopBar) {
+                AppTopBar(
+                    color = MiuixTheme.colorScheme.surfaceVariant,
+                    title = {
+                        // 学期选择下拉
+                        Box {
+                            Row(
+                                modifier = Modifier
+                                    .clickable { if (termList.isNotEmpty()) termDropdownExpanded = true }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (selectedTermCode.isNotEmpty()) selectedTermCode else "课表 · 考试",
+                                    style = MiuixTheme.textStyles.subtitle,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (termList.isNotEmpty()) {
+                                    Icon(Icons.Default.ArrowDropDown, null, Modifier.size(20.dp))
+                                }
+                            }
+                            AppDropdownMenu(expanded = termDropdownExpanded, onDismissRequest = { termDropdownExpanded = false }, alignment = Alignment.TopStart) {
+                                termList.forEach { term ->
+                                    AppDropdownMenuItem(
+                                        text = { Text(term, fontWeight = if (term == selectedTermCode) FontWeight.Bold else FontWeight.Normal) },
+                                        onClick = { termDropdownExpanded = false; switchTerm(term) },
+                                        leadingIcon = if (term == selectedTermCode) {{ Icon(Icons.Default.CalendarMonth, null, Modifier.size(18.dp)) }} else null
+                                    )
+                                }
                             }
                         }
-                        AppDropdownMenu(expanded = termDropdownExpanded, onDismissRequest = { termDropdownExpanded = false }, alignment = Alignment.TopStart) {
-                            termList.forEach { term ->
+                    },
+                    navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
+                    actions = {
+                        // 添加自定义课程（仅课表 tab 显示）
+                        if (selectedTab == 0) {
+                            IconButton(onClick = { showAddCourseDialog = true }, enabled = selectedTermCode.isNotEmpty()) {
+                                Icon(Icons.Default.Add, contentDescription = "添加课程")
+                            }
+                        }
+                        // 导出菜单
+                        Box {
+                            IconButton(onClick = { showExportMenu = true }, enabled = mergedCourses.isNotEmpty()) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                            }
+                            AppDropdownMenu(expanded = showExportMenu, onDismissRequest = { showExportMenu = false }) {
                                 AppDropdownMenuItem(
-                                    text = { Text(term, fontWeight = if (term == selectedTermCode) FontWeight.Bold else FontWeight.Normal) },
-                                    onClick = { termDropdownExpanded = false; switchTerm(term) },
-                                    leadingIcon = if (term == selectedTermCode) {{ Icon(Icons.Default.CalendarMonth, null, Modifier.size(18.dp)) }} else null
+                                    text = { Text("导出日历 (ICS)") },
+                                    leadingIcon = { Icon(Icons.Default.Event, null, Modifier.size(20.dp)) },
+                                    onClick = {
+                                        showExportMenu = false
+                                        val st = startOfTerm
+                                        if (st == null) {
+                                            scope.launch { snackbarHostState.showSnackbar("无法获取开学日期，ICS 导出不可用") }
+                                            return@AppDropdownMenuItem
+                                        }
+                                        val ics = ScheduleExport.generateIcs(mergedCourses, st, selectedTermCode)
+                                        ScheduleExport.shareTextFile(context, ics, "${selectedTermCode}_课表.ics", "text/calendar")
+                                    }
+                                )
+                                AppDropdownMenuItem(
+                                    text = { Text("导出表格 (CSV)") },
+                                    leadingIcon = { Icon(Icons.Default.TableChart, null, Modifier.size(20.dp)) },
+                                    onClick = {
+                                        showExportMenu = false
+                                        val csv = ScheduleExport.generateCsv(mergedCourses)
+                                        ScheduleExport.shareTextFile(context, csv, "${selectedTermCode}_课表.csv", "text/csv")
+                                    }
+                                )
+                                AppDropdownMenuItem(
+                                    text = { Text("导出图片") },
+                                    leadingIcon = { Icon(Icons.Default.Image, null, Modifier.size(20.dp)) },
+                                    onClick = {
+                                        showExportMenu = false
+                                        scope.launch {
+                                            try {
+                                                val bitmap = ScheduleExport.renderScheduleBitmap(
+                                                    mergedCourses, currentWeek, selectedTermCode, showAllWeeks
+                                                )
+                                                ScheduleExport.shareBitmap(context, bitmap, "${selectedTermCode}_第${currentWeek}周课表.png")
+                                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar("图片导出失败: ${e.message}")
+                                            }
+                                        }
+                                    }
                                 )
                             }
                         }
                     }
-                },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") } },
-                actions = {
-                    // 添加自定义课程（仅课表 tab 显示）
-                    if (selectedTab == 0) {
-                        IconButton(onClick = { showAddCourseDialog = true }, enabled = selectedTermCode.isNotEmpty()) {
-                            Icon(Icons.Default.Add, contentDescription = "添加课程")
+                )
+            }
+        }
+    ) { padding ->
+        val contentPadding = if (showTopBar) padding else PaddingValues(0.dp)
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(bottom = if (showTopBar) 0.dp else 104.dp)
+                .background(MiuixTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
+        ) {
+            if (!showTopBar) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    val headerShape = RoundedCornerShape(14.dp)
+                    val headerBgColor = MiuixTheme.colorScheme.secondaryContainer.copy(alpha = 0.58f)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(headerBgColor, headerShape)
+                            .padding(top = 8.dp, bottom = 8.dp)
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                                .clickable { if (termList.isNotEmpty()) termDropdownExpanded = true },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                if (selectedTermCode.isNotEmpty()) selectedTermCode else "选择学期",
+                                style = MiuixTheme.textStyles.body1,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Icon(Icons.Default.ArrowDropDown, null, Modifier.size(18.dp))
                         }
+                        HorizontalDivider(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            thickness = 0.5.dp,
+                            color = MiuixTheme.colorScheme.dividerLine.copy(alpha = 0.55f)
+                        )
+                        TabRowWithContour(
+                            tabs = listOf("课表", "考试", "教材"),
+                            selectedTabIndex = selectedTab,
+                            onTabSelected = { tab ->
+                                selectedTab = tab
+                                if (tab == 2) {
+                                    android.util.Log.d("ScheduleUI", "Tab 教材 clicked: loaded=$textbooksLoaded, loading=$textbooksLoading, term=$selectedTermCode")
+                                    if (!textbooksLoaded && !textbooksLoading && selectedTermCode.isNotEmpty()) loadTextbooks(selectedTermCode)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
                     }
-                    // 导出菜单
-                    Box {
-                        IconButton(onClick = { showExportMenu = true }, enabled = mergedCourses.isNotEmpty()) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "更多")
-                        }
-                        AppDropdownMenu(expanded = showExportMenu, onDismissRequest = { showExportMenu = false }) {
+
+                    AppDropdownMenu(
+                        expanded = termDropdownExpanded,
+                        onDismissRequest = { termDropdownExpanded = false }
+                    ) {
+                        termList.forEach { term ->
                             AppDropdownMenuItem(
-                                text = { Text("导出日历 (ICS)") },
-                                leadingIcon = { Icon(Icons.Default.Event, null, Modifier.size(20.dp)) },
-                                onClick = {
-                                    showExportMenu = false
-                                    val st = startOfTerm
-                                    if (st == null) {
-                                        scope.launch { snackbarHostState.showSnackbar("无法获取开学日期，ICS 导出不可用") }
-                                        return@AppDropdownMenuItem
-                                    }
-                                    val ics = ScheduleExport.generateIcs(mergedCourses, st, selectedTermCode)
-                                    ScheduleExport.shareTextFile(context, ics, "${selectedTermCode}_课表.ics", "text/calendar")
-                                }
-                            )
-                            AppDropdownMenuItem(
-                                text = { Text("导出表格 (CSV)") },
-                                leadingIcon = { Icon(Icons.Default.TableChart, null, Modifier.size(20.dp)) },
-                                onClick = {
-                                    showExportMenu = false
-                                    val csv = ScheduleExport.generateCsv(mergedCourses)
-                                    ScheduleExport.shareTextFile(context, csv, "${selectedTermCode}_课表.csv", "text/csv")
-                                }
-                            )
-                            AppDropdownMenuItem(
-                                text = { Text("导出图片") },
-                                leadingIcon = { Icon(Icons.Default.Image, null, Modifier.size(20.dp)) },
-                                onClick = {
-                                    showExportMenu = false
-                                    scope.launch {
-                                        try {
-                                            val bitmap = ScheduleExport.renderScheduleBitmap(
-                                                mergedCourses, currentWeek, selectedTermCode, showAllWeeks
-                                            )
-                                            ScheduleExport.shareBitmap(context, bitmap, "${selectedTermCode}_第${currentWeek}周课表.png")
-                                        } catch (e: kotlinx.coroutines.CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            snackbarHostState.showSnackbar("图片导出失败: ${e.message}")
-                                        }
-                                    }
-                                }
+                                text = { Text(term, fontWeight = if (term == selectedTermCode) FontWeight.Bold else FontWeight.Normal) },
+                                onClick = { termDropdownExpanded = false; switchTerm(term) },
+                                leadingIcon = if (term == selectedTermCode) {{ Icon(Icons.Default.CalendarMonth, null, Modifier.size(16.dp)) }} else null
                             )
                         }
                     }
                 }
-            )
-        }
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MiuixTheme.colorScheme.surfaceVariant,
-            ) {
-                TabRowWithContour(
-                    tabs = listOf("课表", "考试", "教材"),
-                    selectedTabIndex = selectedTab,
-                    onTabSelected = { tab ->
-                        selectedTab = tab
-                        if (tab == 2) {
-                            android.util.Log.d("ScheduleUI", "Tab 教材 clicked: loaded=$textbooksLoaded, loading=$textbooksLoading, term=$selectedTermCode")
-                            if (!textbooksLoaded && !textbooksLoading && selectedTermCode.isNotEmpty()) loadTextbooks(selectedTermCode)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+            } else {
+                top.yukonga.miuix.kmp.basic.Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    cornerRadius = 14.dp,
+                    colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surface)
+                ) {
+                    TabRowWithContour(
+                        tabs = listOf("课表", "考试", "教材"),
+                        selectedTabIndex = selectedTab,
+                        onTabSelected = { tab ->
+                            selectedTab = tab
+                            if (tab == 2) {
+                                android.util.Log.d("ScheduleUI", "Tab 教材 clicked: loaded=$textbooksLoaded, loading=$textbooksLoading, term=$selectedTermCode")
+                                if (!textbooksLoaded && !textbooksLoading && selectedTermCode.isNotEmpty()) loadTextbooks(selectedTermCode)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
             }
 
             if (isLoading) {
@@ -662,8 +765,11 @@ fun ScheduleScreen(login: JwxtLogin? = null, studentId: String = "", onBack: () 
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                if (isSwitching) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (isSwitching || isRefreshingFromNetwork) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 2.dp
+                    )
                 }
                 AnimatedContent(
                     targetState = selectedTab,
@@ -1070,12 +1176,25 @@ private fun TextbookCard(item: TextbookItem) {
         if (item.edition.isNotBlank()) add(item.edition)
     }
 
+    val accentColor = if (hasTextbook) scheme.primary else scheme.outline
+
     top.yukonga.miuix.kmp.basic.Card(
         modifier = Modifier.fillMaxWidth(),
         cornerRadius = 16.dp,
         colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = scheme.surfaceVariant)
     ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    // 左侧 4dp 色条
+                    drawRect(
+                        color = accentColor.copy(alpha = if (hasTextbook) 0.6f else 0.2f),
+                        size = androidx.compose.ui.geometry.Size(4.dp.toPx(), size.height)
+                    )
+                }
+                .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp)
+        ) {
             // ── 课程名行 ──
             Row(
                 Modifier.fillMaxWidth(),
@@ -1123,70 +1242,52 @@ private fun TextbookCard(item: TextbookItem) {
                     modifier = Modifier.padding(start = 30.dp)
                 )
             } else {
-                Spacer(Modifier.height(12.dp))
-                // ── 教材信息区：采用浅色内卡片风格 ──
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    color = scheme.surface.copy(alpha = 0.7f)
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        // 书名
-                        if (bookName.isNotEmpty()) {
-                            SelectionContainer {
-                                Text(
-                                    "《${bookName}》",
-                                    style = MiuixTheme.textStyles.body1,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = scheme.onSurface
-                                )
-                            }
+                Spacer(Modifier.height(10.dp))
+                // ── 教材信息区 ──
+                Column(Modifier.padding(start = 30.dp)) {
+                    // 书名
+                    if (bookName.isNotEmpty()) {
+                        SelectionContainer {
+                            Text(
+                                "《${bookName}》",
+                                style = MiuixTheme.textStyles.body1,
+                                fontWeight = FontWeight.SemiBold,
+                                color = scheme.onSurface
+                            )
                         }
+                    }
 
-                        // 作者（带图标）
-                        if (author.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Person, null, Modifier.size(14.dp), tint = scheme.onSurfaceVariantSummary)
-                                Spacer(Modifier.width(6.dp))
+                    // 作者 · 出版信息 合并为一行
+                    val metaInfo = buildList {
+                        if (author.isNotEmpty()) add(author)
+                        addAll(pubParts)
+                    }.joinToString(" · ")
+                    if (metaInfo.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            metaInfo,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = scheme.onSurfaceVariantSummary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // ISBN（胶囊标签）
+                    if (isbn.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        SelectionContainer {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = scheme.secondaryContainer.copy(alpha = 0.5f)
+                            ) {
                                 Text(
-                                    author,
-                                    style = MiuixTheme.textStyles.body2,
-                                    color = scheme.onSurfaceVariantSummary
+                                    "ISBN $isbn",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    style = MiuixTheme.textStyles.footnote1,
+                                    color = scheme.onSecondaryContainer.copy(alpha = 0.8f),
+                                    letterSpacing = 0.4.sp
                                 )
-                            }
-                        }
-
-                        // 出版社 + 版次（带图标）
-                        if (pubParts.isNotEmpty()) {
-                            Spacer(Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Business, null, Modifier.size(14.dp), tint = scheme.outline)
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    pubParts.joinToString(" · "),
-                                    style = MiuixTheme.textStyles.body2,
-                                    color = scheme.outline
-                                )
-                            }
-                        }
-
-                        // ISBN（胶囊标签）
-                        if (isbn.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            SelectionContainer {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = scheme.secondaryContainer.copy(alpha = 0.5f)
-                                ) {
-                                    Text(
-                                        "ISBN $isbn",
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                        style = MiuixTheme.textStyles.footnote1,
-                                        color = scheme.onSecondaryContainer.copy(alpha = 0.8f),
-                                        letterSpacing = 0.4.sp
-                                    )
-                                }
                             }
                         }
                     }

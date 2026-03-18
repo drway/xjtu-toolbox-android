@@ -201,7 +201,7 @@ fun AttendanceScreen(
         topBar = {
             TopAppBar(
                 title = "考勤查询",
-                color = MiuixTheme.colorScheme.surfaceVariant,
+                color = MiuixTheme.colorScheme.surface,
                 largeTitle = "考勤查询",
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
@@ -226,7 +226,13 @@ fun AttendanceScreen(
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
         } else {
-            Column(Modifier.fillMaxSize().padding(padding).background(MiuixTheme.colorScheme.surfaceVariant).nestedScroll(scrollBehavior.nestedScrollConnection)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .background(MiuixTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .nestedScroll(scrollBehavior.nestedScrollConnection)
+            ) {
                 // 学期选择器
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                     Surface(
@@ -237,7 +243,7 @@ fun AttendanceScreen(
                                 indication = top.yukonga.miuix.kmp.utils.SinkFeedback()
                             ) { termDropdownExpanded = true },
                         shape = RoundedCornerShape(12.dp),
-                        color = MiuixTheme.colorScheme.surfaceVariant
+                        color = MiuixTheme.colorScheme.surface
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -302,7 +308,7 @@ fun AttendanceScreen(
                 }
 
                 // Tab
-                Surface(modifier = Modifier.fillMaxWidth(), color = MiuixTheme.colorScheme.surfaceVariant) {
+                Surface(modifier = Modifier.fillMaxWidth(), color = MiuixTheme.colorScheme.surface) {
                 TabRowWithContour(
                     tabs = listOf("概览", "流水"),
                     selectedTabIndex = selectedTab,
@@ -357,7 +363,7 @@ private fun OverviewTab(
             top.yukonga.miuix.kmp.basic.Card(
                 Modifier.fillMaxWidth(),
                 colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = if (attendanceRate < 70) MiuixTheme.colorScheme.errorContainer
-                    else MiuixTheme.colorScheme.surfaceVariant
+                    else MiuixTheme.colorScheme.surface
                 )
             ) {
                 Column(Modifier.padding(16.dp)) {
@@ -615,7 +621,10 @@ private fun RecordFlowTab(
 
 @Composable
 private fun StatCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    top.yukonga.miuix.kmp.basic.Card(modifier = modifier) {
+    top.yukonga.miuix.kmp.basic.Card(
+        modifier = modifier,
+        colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surface)
+    ) {
         Column(Modifier.fillMaxWidth().padding(vertical = 10.dp, horizontal = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             Text(value, style = MiuixTheme.textStyles.title4, color = color, fontWeight = FontWeight.Bold)
@@ -632,7 +641,10 @@ private fun AttendanceRecordCard(record: AttendanceWaterRecord) {
         WaterType.ABSENCE -> MiuixTheme.colorScheme.error
         WaterType.LEAVE -> MiuixTheme.colorScheme.onSurfaceVariantSummary
     }
-    top.yukonga.miuix.kmp.basic.Card(Modifier.fillMaxWidth()) {
+    top.yukonga.miuix.kmp.basic.Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surface)
+    ) {
         Row(Modifier.fillMaxWidth().padding(12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {

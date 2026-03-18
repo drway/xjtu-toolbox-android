@@ -231,7 +231,7 @@ fun VenueScreen(login: VenueLogin, onBack: () -> Unit) {
     LaunchedEffect(Unit) { loadVenues() }
 
     // 切换日期/场馆时重新加载时段
-    LaunchedEffect(selectedVenue, selectedDate) {
+    LaunchedEffect(selectedDate) {
         if (selectedVenue != null && currentPage is VenuePage.SlotSelection) {
             loadSlots()
         }
@@ -520,8 +520,13 @@ private fun VenueCard(
     onDoubleClick: () -> Unit
 ) {
     var showFavoriteAnimation by remember { mutableStateOf(false) }
-    
+    var isInitialComposition by remember { mutableStateOf(true) }
+
     LaunchedEffect(isFavorite) {
+        if (isInitialComposition) {
+            isInitialComposition = false
+            return@LaunchedEffect
+        }
         if (isFavorite) {
             showFavoriteAnimation = true
         }

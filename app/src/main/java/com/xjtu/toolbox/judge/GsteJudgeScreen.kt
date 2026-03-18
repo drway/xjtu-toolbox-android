@@ -175,56 +175,64 @@ fun GsteJudgeScreen(
                     title = "⚠️ 确认一键好评",
                     onDismissRequest = { showConfirmDialog.value = false }
                 ) {
-                    Text("将为 ${allowList.size} 门课程全部提交好评。\n\n注意：研究生评教提交后不可撤销，请确认后操作。")
-                    Spacer(Modifier.height(20.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(
-                            onClick = { showConfirmDialog.value = false },
-                            modifier = Modifier.weight(1f),
-                            colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColors(color = MiuixTheme.colorScheme.secondaryContainer)
-                        ) { Text("取消", color = MiuixTheme.colorScheme.onSecondaryContainer) }
-                        Button(onClick = {
-                            showConfirmDialog.value = false
-                            scope.launch {
-                                isAutoJudging = true
-                                autoJudgeTotal = allowList.size
-                                autoJudgeProgress = 0
-                                autoJudgeMessage = "正在评教..."
-                                var failCount = 0
-                                var lastError = ""
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .imePadding()
+                            .navigationBarsPadding()
+                            .padding(bottom = 8.dp)
+                    ) {
+                        Text("将为 ${allowList.size} 门课程全部提交好评。\n\n注意：研究生评教提交后不可撤销，请确认后操作。")
+                        Spacer(Modifier.height(20.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = { showConfirmDialog.value = false },
+                                modifier = Modifier.weight(1f),
+                                colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColors(color = MiuixTheme.colorScheme.secondaryContainer)
+                            ) { Text("取消", color = MiuixTheme.colorScheme.onSecondaryContainer) }
+                            Button(onClick = {
+                                showConfirmDialog.value = false
+                                scope.launch {
+                                    isAutoJudging = true
+                                    autoJudgeTotal = allowList.size
+                                    autoJudgeProgress = 0
+                                    autoJudgeMessage = "正在评教..."
+                                    var failCount = 0
+                                    var lastError = ""
 
-                                try {
-                                    for ((index, q) in allowList.withIndex()) {
-                                        autoJudgeMessage =
-                                            "正在评教: ${q.KCMC} (${index + 1}/$autoJudgeTotal)"
-                                        autoJudgeProgress = index
+                                    try {
+                                        for ((index, q) in allowList.withIndex()) {
+                                            autoJudgeMessage =
+                                                "正在评教: ${q.KCMC} (${index + 1}/$autoJudgeTotal)"
+                                            autoJudgeProgress = index
 
-                                        try {
-                                            withContext(Dispatchers.IO) {
-                                                val html = api.getQuestionnaireHtml(q)
-                                                val (meta, questions) = api.parseFormFromHtml(html)
-                                                val formData =
-                                                    api.autoFill(questions, meta, q, score = 3)
-                                                api.submitQuestionnaire(q, formData)
+                                            try {
+                                                withContext(Dispatchers.IO) {
+                                                    val html = api.getQuestionnaireHtml(q)
+                                                    val (meta, questions) = api.parseFormFromHtml(html)
+                                                    val formData =
+                                                        api.autoFill(questions, meta, q, score = 3)
+                                                    api.submitQuestionnaire(q, formData)
+                                                }
+                                            } catch (e: Exception) {
+                                                failCount++
+                                                lastError = "${q.KCMC}: ${e.message}"
                                             }
-                                        } catch (e: Exception) {
-                                            failCount++
-                                            lastError = "${q.KCMC}: ${e.message}"
-                                        }
 
-                                        autoJudgeProgress = index + 1
-                                        delay(500) // 间隔避免被限流
+                                            autoJudgeProgress = index + 1
+                                            delay(500) // 间隔避免被限流
+                                        }
+                                        autoJudgeMessage = if (failCount == 0) "全部评教完成！"
+                                            else "${autoJudgeTotal - failCount}门成功，${failCount}门失败（$lastError）"
+                                        loadData()
+                                    } catch (e: Exception) {
+                                        autoJudgeMessage = "评教出错: ${e.message}"
+                                    } finally {
+                                        isAutoJudging = false
                                     }
-                                    autoJudgeMessage = if (failCount == 0) "全部评教完成！"
-                                        else "${autoJudgeTotal - failCount}门成功，${failCount}门失败（$lastError）"
-                                    loadData()
-                                } catch (e: Exception) {
-                                    autoJudgeMessage = "评教出错: ${e.message}"
-                                } finally {
-                                    isAutoJudging = false
                                 }
-                            }
-                        }, modifier = Modifier.weight(1f)) { Text("确认提交") }
+                            }, modifier = Modifier.weight(1f)) { Text("确认提交") }
+                        }
                     }
                 }
 
@@ -235,7 +243,10 @@ fun GsteJudgeScreen(
                 ) {
                     Button(
                         onClick = { if (!isAutoJudging) showConfirmDialog.value = true },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth(0.84f)
+                            .height(44.dp)
+                            .align(Alignment.CenterHorizontally),
                         enabled = !isAutoJudging
                     ) {
                         Icon(Icons.Default.ThumbUp, contentDescription = null)

@@ -222,18 +222,16 @@ fun SchoolCourseScreen(
                 val selectedIdx = termList.indexOfFirst { it.code == selectedTermCode }.coerceAtLeast(0)
 
                 Card(Modifier.fillMaxWidth(), cornerRadius = 16.dp) {
-                    Column(Modifier.padding(16.dp)) {
-                        if (termEntries.isNotEmpty()) {
-                            SuperSpinner(
-                                items = termEntries,
-                                selectedIndex = selectedIdx,
-                                title = "学期",
-                                onSelectedIndexChange = { idx ->
-                                    selectedTermCode = termList.getOrNull(idx)?.code ?: ""
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
+                    if (termEntries.isNotEmpty()) {
+                        SuperSpinner(
+                            items = termEntries,
+                            selectedIndex = selectedIdx,
+                            title = "学期",
+                            onSelectedIndexChange = { idx ->
+                                selectedTermCode = termList.getOrNull(idx)?.code ?: ""
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
             }
@@ -323,23 +321,23 @@ fun SchoolCourseScreen(
                                 Spacer(Modifier.height(12.dp))
 
                                 // 开课单位
-                                Text("开课单位", style = MiuixTheme.textStyles.footnote1, fontWeight = FontWeight.Medium)
-                                Spacer(Modifier.height(4.dp))
                                 val deptEntries = buildList {
                                     add(SpinnerEntry(title = "不限"))
                                     departmentList.forEach { add(SpinnerEntry(title = it.name)) }
                                 }
                                 val deptIdx = if (selectedDeptCode.isBlank()) 0
                                     else (departmentList.indexOfFirst { it.code == selectedDeptCode } + 1).coerceAtLeast(0)
-                                SuperSpinner(
-                                    items = deptEntries,
-                                    selectedIndex = deptIdx,
-                                    title = "开课单位",
-                                    onSelectedIndexChange = { idx ->
-                                        selectedDeptCode = if (idx == 0) "" else departmentList.getOrNull(idx - 1)?.code ?: ""
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                Card(Modifier.fillMaxWidth(), cornerRadius = 12.dp) {
+                                    SuperSpinner(
+                                        items = deptEntries,
+                                        selectedIndex = deptIdx,
+                                        title = "开课单位",
+                                        onSelectedIndexChange = { idx ->
+                                            selectedDeptCode = if (idx == 0) "" else departmentList.getOrNull(idx - 1)?.code ?: ""
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
 
                                 Spacer(Modifier.height(12.dp))
 
@@ -394,27 +392,31 @@ fun SchoolCourseScreen(
                                         add(SpinnerEntry(title = "不限"))
                                         for (i in 1..14) add(SpinnerEntry(title = "第${i}节"))
                                     }
-                                    SuperSpinner(
-                                        items = sectionEntries,
-                                        selectedIndex = selectedStartSection,
-                                        title = "开始",
-                                        onSelectedIndexChange = { idx ->
-                                            selectedStartSection = idx
-                                            if (selectedEndSection in 1..<idx) selectedEndSection = idx
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
+                                    Card(Modifier.weight(1f), cornerRadius = 12.dp) {
+                                        SuperSpinner(
+                                            items = sectionEntries,
+                                            selectedIndex = selectedStartSection,
+                                            title = "开始",
+                                            onSelectedIndexChange = { idx ->
+                                                selectedStartSection = idx
+                                                if (selectedEndSection in 1..<idx) selectedEndSection = idx
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
                                     Text(" ~ ", Modifier.padding(horizontal = 8.dp), color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-                                    SuperSpinner(
-                                        items = sectionEntries,
-                                        selectedIndex = selectedEndSection,
-                                        title = "结束",
-                                        onSelectedIndexChange = { idx ->
-                                            selectedEndSection = idx
-                                            if (selectedStartSection in 1..14 && idx in 1..<selectedStartSection) selectedStartSection = idx
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
+                                    Card(Modifier.weight(1f), cornerRadius = 12.dp) {
+                                        SuperSpinner(
+                                            items = sectionEntries,
+                                            selectedIndex = selectedEndSection,
+                                            title = "结束",
+                                            onSelectedIndexChange = { idx ->
+                                                selectedEndSection = idx
+                                                if (selectedStartSection in 1..14 && idx in 1..<selectedStartSection) selectedStartSection = idx
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
                                 }
 
                                 Spacer(Modifier.height(12.dp))

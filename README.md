@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Android-green?logo=android" />
   <img src="https://img.shields.io/badge/minSdk-31_(Android_12)-blue" />
-  <img src="https://img.shields.io/badge/version-2.8.1-orange" />
+  <img src="https://img.shields.io/badge/version-3.0-orange" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" />
 </p>
 
@@ -76,8 +76,8 @@ app/src/main/java/com/xjtu/toolbox/
 项目配置了 GitHub Actions：push/PR 到 `main` 自动编译 Debug，推送 `v*` tag 自动打包 Release 并发布到 GitHub Releases。
 
 ```bash
-git tag v2.8.1
-git push origin v2.8.1
+git tag v3.0
+git push origin v3.0
 # Actions 自动构建并发布
 ```
 

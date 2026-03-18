@@ -151,6 +151,13 @@ class JudgeApi(private val login: JwxtLogin) {
     private val gson = Gson()
     private var cachedTerm: String? = null
 
+    private fun normalizeQuestionKey(value: String): String {
+        val ignoredChars = setOf('：', ':', '（', '）', '(', ')', '。', '，', ',', '、', '“', '”', '"')
+        return value
+            .filterNot { it.isWhitespace() || it in ignoredChars }
+            .lowercase()
+    }
+
     /**
      * 获取当前学期的字符串表示，如 "2024-2025-1"
      */
@@ -406,39 +413,82 @@ class JudgeApi(private val login: JwxtLogin) {
      * @return Pair<是否成功, 服务器消息>
      */
     fun editQuestionnaire(q: Questionnaire, username: String): Pair<Boolean, String> {
-        val requestParamStr = gson.toJson(
-            mapOf(
-                "WJDM" to q.WJDM,
-                "PCDM" to q.PCDM,
-                "CPR" to username,
-                "PGLXDM" to q.PGLXDM,
-                "BPR" to q.BPR,
-                "JXBID" to q.JXBID,
-                "PGNR" to q.PGNR
-            )
+        val endpointCandidates = listOf(
+            "https://jwxt.xjtu.edu.cn/jwapp/sys/wspjyyapp/WspjwjController/updateCprZt.do",
+            "https://jwxt.xjtu.edu.cn/jwapp/sys/wspjyyapp/WspjwjController/updateXsPgysjg.do"
         )
 
-        val formBody = FormBody.Builder()
-            .add("requestParamStr", requestParamStr)
-            .build()
+        val basePayload = linkedMapOf(
+            "WJDM" to q.WJDM,
+            "PCDM" to q.PCDM,
+            "CPR" to username,
+            "PGLXDM" to q.PGLXDM,
+            "BPR" to q.BPR,
+            "JXBID" to q.JXBID,
+            "PGNR" to q.PGNR
+        )
 
-        val request = Request.Builder()
-            .url("https://jwxt.xjtu.edu.cn/jwapp/sys/wspjyyapp/WspjwjController/updateCprZt.do")
-            .header("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
-            .post(formBody)
-            .build()
+        val payloadVariants = listOf(
+            basePayload,
+            linkedMapOf<String, String?>().apply {
+                putAll(basePayload)
+                put("PGLY", "1")
+            },
+            linkedMapOf<String, String?>().apply {
+                putAll(basePayload)
+                put("PGLY", "1")
+                put("SFTJ", "0")
+            },
+            linkedMapOf<String, String?>().apply {
+                putAll(basePayload)
+                put("XNXQDM", q.XNXQDM)
+                put("WJMC", q.WJMC)
+            }
+        )
 
-        val responseBody = login.client.newCall(request).execute().use { response ->
-            response.body?.string() ?: throw RuntimeException("空响应")
+        var lastMsg = "未知错误"
+        var lastEndpoint = endpointCandidates.first()
+
+        endpointLoop@ for (endpoint in endpointCandidates) {
+            for (payload in payloadVariants) {
+                try {
+                    val requestParamStr = gson.toJson(payload)
+                    val formBody = FormBody.Builder()
+                        .add("requestParamStr", requestParamStr)
+                        .build()
+
+                    val request = Request.Builder()
+                        .url(endpoint)
+                        .header("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+                        .post(formBody)
+                        .build()
+
+                    val responseBody = login.client.newCall(request).execute().use { response ->
+                        response.body?.string() ?: throw RuntimeException("空响应")
+                    }
+                    val root = responseBody.safeParseJsonObject()
+                    val code = root.get("code").safeString("-1")
+                    val datasObj = root.getAsJsonObject("datas")
+                    val datasCode = datasObj?.get("code").safeString("-1")
+                    val msg = datasObj?.get("msg").safeString("未知错误")
+                    val success = (code == "0" && datasCode == "0") ||
+                            msg.contains("成功")
+
+                    if (success) {
+                        return Pair(true, msg)
+                    }
+
+                    lastMsg = msg
+                    lastEndpoint = endpoint
+                } catch (e: Exception) {
+                    lastMsg = e.message ?: "网络异常"
+                    lastEndpoint = endpoint
+                    continue
+                }
+            }
         }
-        val root = responseBody.safeParseJsonObject()
-        val code = root.get("code").safeString("-1")
-        val datasObj = root.getAsJsonObject("datas")
-        val datasCode = datasObj?.get("code").safeString("-1")
-        val msg = datasObj?.get("msg").safeString("未知错误")
 
-        val success = code == "0" && datasCode == "0"
-        return Pair(success, msg)
+        return Pair(false, "$lastMsg（endpoint=${lastEndpoint.substringAfterLast('/')}）")
     }
 
     /**
@@ -456,13 +506,39 @@ class JudgeApi(private val login: JwxtLogin) {
         // 获取所有题目
         val dataList = getQuestionnaireData(q, username)
         // 获取所有选项
-        val options = getQuestionnaireOptions(q, username, finished = false)
+        val optionsByQuestionCode = getQuestionnaireOptions(q, username, finished = false)
+        val allOptions = optionsByQuestionCode.values.flatten()
+        val optionsByAnswerCode = allOptions.groupBy { it.DADM }
+        val optionsByQuestionName = allOptions
+            .mapNotNull { option ->
+                val key = normalizeQuestionKey(option.ZBMC)
+                if (key.isBlank()) null else key to option
+            }
+            .groupBy(
+                keySelector = { it.first },
+                valueTransform = { it.second }
+            )
 
         for (item in dataList) {
             when (item.TXDM) {
                 "01" -> {
-                    // 客观题：选择最优选项
-                    item.setOption(options, score)
+                    // 客观题：先按题目代码匹配，再按答案代码/题目名称兜底
+                    val matchedOptions =
+                        optionsByQuestionCode[item.ZBDM]
+                            ?: optionsByAnswerCode[item.DADM]
+                            ?: optionsByQuestionName[normalizeQuestionKey(item.ZBMC)]
+
+                    if (matchedOptions.isNullOrEmpty()) {
+                        if (item.SFBT != "1") {
+                            // 非必填题允许跳过
+                            continue
+                        }
+                        throw IllegalArgumentException(
+                            "题目《${item.ZBMC}》未匹配到可选项（ZBDM=${item.ZBDM}, DADM=${item.DADM}）"
+                        )
+                    }
+
+                    item.setOption(mapOf(item.ZBDM to matchedOptions), score)
                 }
                 "02" -> {
                     // 主观题：设置默认文字
@@ -474,7 +550,7 @@ class JudgeApi(private val login: JwxtLogin) {
                         val maxScore = item.getMaxScore()
                         item.setScore(maxScore)
                     } catch (_: Exception) {
-                        item.setScore(100)
+                        item.DA = item.FZ?.takeIf { it.isNotBlank() } ?: "100"
                     }
                 }
             }

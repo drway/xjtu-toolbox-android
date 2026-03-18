@@ -7,8 +7,10 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.view.View
 import android.widget.RemoteViews
 import com.google.gson.Gson
+import com.xjtu.toolbox.BottomTab
 import com.xjtu.toolbox.MainActivity
 import com.xjtu.toolbox.R
 import com.xjtu.toolbox.Routes
@@ -47,6 +49,7 @@ object ScheduleWidgetUpdater {
     const val ACTION_WEEK_NEXT = "com.xjtu.toolbox.widget.ACTION_SCHEDULE_WIDGET_WEEK_NEXT"
     const val ACTION_DAY_PREV = "com.xjtu.toolbox.widget.ACTION_SCHEDULE_WIDGET_DAY_PREV"
     const val ACTION_DAY_NEXT = "com.xjtu.toolbox.widget.ACTION_SCHEDULE_WIDGET_DAY_NEXT"
+
     private const val PREFS_NAME = "schedule_widget_prefs"
     private const val KEY_WEEK_OFFSET = "week_offset"
     private const val KEY_DAY_OF_WEEK = "day_of_week"
@@ -70,8 +73,7 @@ object ScheduleWidgetUpdater {
         )
     }
 
-    fun handleWeekAction(context: Context, action: String?): Boolean {
-        val todayDow = LocalDate.now().dayOfWeek.value
+    fun handleAction(context: Context, action: String?): Boolean {
         when (action) {
             ACTION_WEEK_PREV -> {
                 adjustWeekOffset(context, -1)
@@ -86,13 +88,13 @@ object ScheduleWidgetUpdater {
             }
 
             ACTION_DAY_PREV -> {
-                adjustSelectedDayOfWeek(context, -1, todayDow)
+                adjustSelectedDayOfWeek(context, -1)
                 requestUpdate(context, resetToToday = false)
                 return true
             }
 
             ACTION_DAY_NEXT -> {
-                adjustSelectedDayOfWeek(context, 1, todayDow)
+                adjustSelectedDayOfWeek(context, 1)
                 requestUpdate(context, resetToToday = false)
                 return true
             }
@@ -129,7 +131,8 @@ object ScheduleWidgetUpdater {
 
     private fun buildLaunchPendingIntent(context: Context, requestCode: Int): PendingIntent {
         val launchIntent = Intent(context, MainActivity::class.java).apply {
-            putExtra(MainActivity.EXTRA_LAUNCH_ROUTE, Routes.SCHEDULE)
+            putExtra(MainActivity.EXTRA_LAUNCH_ROUTE, Routes.MAIN)
+            putExtra(MainActivity.EXTRA_LAUNCH_TAB, BottomTab.COURSES.name)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         return PendingIntent.getActivity(
@@ -140,7 +143,7 @@ object ScheduleWidgetUpdater {
         )
     }
 
-    private fun buildWeekActionPendingIntent(
+    private fun buildActionPendingIntent(
         context: Context,
         requestCode: Int,
         action: String,
@@ -163,104 +166,95 @@ object ScheduleWidgetUpdater {
         }
     }
 
-    private fun buildSmallViews(context: Context, data: WidgetScheduleData, appWidgetId: Int): RemoteViews {
-        val views = RemoteViews(context.packageName, R.layout.widget_schedule_2x2)
+    private fun bindCommonViews(
+        context: Context,
+        data: WidgetScheduleData,
+        appWidgetId: Int,
+        size: WidgetSize,
+        providerClass: Class<out AppWidgetProvider>,
+        rootRequestCode: Int,
+        weekRequestOffset: Int,
+        dayRequestOffset: Int,
+        listTemplateBase: Int,
+        layoutRes: Int
+    ): RemoteViews {
+        val views = RemoteViews(context.packageName, layoutRes)
         views.setTextViewText(R.id.widget_title, "课表")
         views.setTextViewText(R.id.widget_week, data.weekText)
         views.setTextViewText(R.id.widget_day_text, data.dayText)
         views.setTextViewText(R.id.widget_status, data.statusText)
         views.setTextViewText(R.id.widget_update, data.updateText)
-        views.setOnClickPendingIntent(R.id.widget_root, buildLaunchPendingIntent(context, 1001))
+        views.setOnClickPendingIntent(R.id.widget_root, buildLaunchPendingIntent(context, rootRequestCode))
         views.setOnClickPendingIntent(
             R.id.widget_week_prev,
-            buildWeekActionPendingIntent(context, 1101, ACTION_WEEK_PREV, ScheduleWidget2x2Provider::class.java)
+            buildActionPendingIntent(context, weekRequestOffset + 1, ACTION_WEEK_PREV, providerClass)
         )
         views.setOnClickPendingIntent(
             R.id.widget_week_next,
-            buildWeekActionPendingIntent(context, 1102, ACTION_WEEK_NEXT, ScheduleWidget2x2Provider::class.java)
+            buildActionPendingIntent(context, weekRequestOffset + 2, ACTION_WEEK_NEXT, providerClass)
         )
         views.setOnClickPendingIntent(
             R.id.widget_day_prev,
-            buildWeekActionPendingIntent(context, 1103, ACTION_DAY_PREV, ScheduleWidget2x2Provider::class.java)
+            buildActionPendingIntent(context, dayRequestOffset + 1, ACTION_DAY_PREV, providerClass)
         )
         views.setOnClickPendingIntent(
             R.id.widget_day_next,
-            buildWeekActionPendingIntent(context, 1104, ACTION_DAY_NEXT, ScheduleWidget2x2Provider::class.java)
+            buildActionPendingIntent(context, dayRequestOffset + 2, ACTION_DAY_NEXT, providerClass)
         )
         views.setRemoteAdapter(
             R.id.widget_course_list,
-            buildCourseListAdapterIntent(context, appWidgetId, WidgetSize.SMALL)
+            buildCourseListAdapterIntent(context, appWidgetId, size)
         )
         views.setEmptyView(R.id.widget_course_list, R.id.widget_empty)
         views.setPendingIntentTemplate(
             R.id.widget_course_list,
-            buildLaunchPendingIntent(context, 3000 + appWidgetId)
+            buildLaunchPendingIntent(context, listTemplateBase + appWidgetId)
         )
 
         if (!data.hasCache) {
-            views.setViewVisibility(R.id.widget_empty, android.view.View.VISIBLE)
+            views.setViewVisibility(R.id.widget_empty, View.VISIBLE)
             views.setTextViewText(R.id.widget_empty, "暂无课表缓存\n请先打开课表页同步")
             return views
         }
 
         if (data.courses.isEmpty()) {
-            views.setViewVisibility(R.id.widget_empty, android.view.View.VISIBLE)
+            views.setViewVisibility(R.id.widget_empty, View.VISIBLE)
             views.setTextViewText(R.id.widget_empty, "所选日期无课程")
             return views
         }
 
-        views.setViewVisibility(R.id.widget_empty, android.view.View.GONE)
+        views.setViewVisibility(R.id.widget_empty, View.GONE)
         return views
     }
 
+    private fun buildSmallViews(context: Context, data: WidgetScheduleData, appWidgetId: Int): RemoteViews {
+        return bindCommonViews(
+            context = context,
+            data = data,
+            appWidgetId = appWidgetId,
+            size = WidgetSize.SMALL,
+            providerClass = ScheduleWidget2x2Provider::class.java,
+            rootRequestCode = 1001,
+            weekRequestOffset = 1100,
+            dayRequestOffset = 1200,
+            listTemplateBase = 3000,
+            layoutRes = R.layout.widget_schedule_2x2
+        )
+    }
+
     private fun buildLargeViews(context: Context, data: WidgetScheduleData, appWidgetId: Int): RemoteViews {
-        val views = RemoteViews(context.packageName, R.layout.widget_schedule_4x2)
-        views.setTextViewText(R.id.widget_title, "课表")
-        views.setTextViewText(R.id.widget_week, data.weekText)
-        views.setTextViewText(R.id.widget_day_text, data.dayText)
-        views.setTextViewText(R.id.widget_status, data.statusText)
-        views.setTextViewText(R.id.widget_update, data.updateText)
-        views.setOnClickPendingIntent(R.id.widget_root, buildLaunchPendingIntent(context, 1002))
-        views.setOnClickPendingIntent(
-            R.id.widget_week_prev,
-            buildWeekActionPendingIntent(context, 1201, ACTION_WEEK_PREV, ScheduleWidget4x2Provider::class.java)
+        return bindCommonViews(
+            context = context,
+            data = data,
+            appWidgetId = appWidgetId,
+            size = WidgetSize.LARGE,
+            providerClass = ScheduleWidget4x2Provider::class.java,
+            rootRequestCode = 1002,
+            weekRequestOffset = 2100,
+            dayRequestOffset = 2200,
+            listTemplateBase = 4000,
+            layoutRes = R.layout.widget_schedule_4x2
         )
-        views.setOnClickPendingIntent(
-            R.id.widget_week_next,
-            buildWeekActionPendingIntent(context, 1202, ACTION_WEEK_NEXT, ScheduleWidget4x2Provider::class.java)
-        )
-        views.setOnClickPendingIntent(
-            R.id.widget_day_prev,
-            buildWeekActionPendingIntent(context, 1203, ACTION_DAY_PREV, ScheduleWidget4x2Provider::class.java)
-        )
-        views.setOnClickPendingIntent(
-            R.id.widget_day_next,
-            buildWeekActionPendingIntent(context, 1204, ACTION_DAY_NEXT, ScheduleWidget4x2Provider::class.java)
-        )
-        views.setRemoteAdapter(
-            R.id.widget_course_list,
-            buildCourseListAdapterIntent(context, appWidgetId, WidgetSize.LARGE)
-        )
-        views.setEmptyView(R.id.widget_course_list, R.id.widget_empty)
-        views.setPendingIntentTemplate(
-            R.id.widget_course_list,
-            buildLaunchPendingIntent(context, 4000 + appWidgetId)
-        )
-
-        if (!data.hasCache) {
-            views.setViewVisibility(R.id.widget_empty, android.view.View.VISIBLE)
-            views.setTextViewText(R.id.widget_empty, "暂无课表缓存，请先打开课表页同步")
-            return views
-        }
-
-        if (data.courses.isEmpty()) {
-            views.setViewVisibility(R.id.widget_empty, android.view.View.VISIBLE)
-            views.setTextViewText(R.id.widget_empty, "所选日期无课程")
-            return views
-        }
-
-        views.setViewVisibility(R.id.widget_empty, android.view.View.GONE)
-        return views
     }
 
     internal fun loadScheduleData(context: Context): WidgetScheduleData {
@@ -337,10 +331,10 @@ object ScheduleWidgetUpdater {
         }
         val weekAdjusted = displayBaseWeek != null && effectiveWeek != displayBaseWeek
         val notStartedYet = baseWeek != null &&
-                firstTeachWeek != null &&
-                baseWeek in 1..maxWeek &&
-                baseWeek < firstTeachWeek &&
-                weekOffset == 0
+            firstTeachWeek != null &&
+            baseWeek in 1..maxWeek &&
+            baseWeek < firstTeachWeek &&
+            weekOffset == 0
 
         val shouldFilterByWeek = baseWeek != null || weekOffset != 0
 
@@ -375,13 +369,17 @@ object ScheduleWidgetUpdater {
                 val end = XjtuTime.getClassTime(course.endSection)?.end
                 start != null && end != null && now >= start && now <= end
             }
-        } else null
+        } else {
+            null
+        }
         val nextCourse = if (!weekAdjusted && isSelectedToday) {
             todayCourses.firstOrNull { course ->
                 val start = XjtuTime.getClassTime(course.startSection)?.start
                 start != null && now < start
             }
-        } else null
+        } else {
+            null
+        }
 
         val status = when {
             todayCourses.isEmpty() -> "周${weekdayLabel(selectedDayOfWeek)}没有课程"
@@ -415,7 +413,7 @@ object ScheduleWidgetUpdater {
             .coerceIn(MIN_WEEK_OFFSET, MAX_WEEK_OFFSET)
     }
 
-    private fun adjustWeekOffset(context: Context, delta: Int) {
+    internal fun adjustWeekOffset(context: Context, delta: Int) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val current = prefs.getInt(KEY_WEEK_OFFSET, 0)
         val target = (current + delta).coerceIn(MIN_WEEK_OFFSET, MAX_WEEK_OFFSET)
@@ -428,11 +426,28 @@ object ScheduleWidgetUpdater {
         return saved.coerceIn(1, 7)
     }
 
-    private fun adjustSelectedDayOfWeek(context: Context, delta: Int, todayDow: Int) {
+    internal fun adjustSelectedDayOfWeek(context: Context, delta: Int) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val current = prefs.getInt(KEY_DAY_OF_WEEK, todayDow).coerceIn(1, 7)
-        val next = (((current - 1 + delta) % 7 + 7) % 7) + 1
-        prefs.edit().putInt(KEY_DAY_OF_WEEK, next).apply()
+        val todayDow = LocalDate.now().dayOfWeek.value
+        val currentDay = prefs.getInt(KEY_DAY_OF_WEEK, todayDow).coerceIn(1, 7)
+        val currentOffset = prefs.getInt(KEY_WEEK_OFFSET, 0).coerceIn(MIN_WEEK_OFFSET, MAX_WEEK_OFFSET)
+
+        var nextDay = currentDay + delta
+        var nextOffset = currentOffset
+
+        while (nextDay < 1) {
+            nextDay += 7
+            nextOffset = (nextOffset - 1).coerceIn(MIN_WEEK_OFFSET, MAX_WEEK_OFFSET)
+        }
+        while (nextDay > 7) {
+            nextDay -= 7
+            nextOffset = (nextOffset + 1).coerceIn(MIN_WEEK_OFFSET, MAX_WEEK_OFFSET)
+        }
+
+        prefs.edit()
+            .putInt(KEY_DAY_OF_WEEK, nextDay)
+            .putInt(KEY_WEEK_OFFSET, nextOffset)
+            .apply()
     }
 
     private fun weekdayLabel(dayOfWeek: Int): String = when (dayOfWeek) {
@@ -506,7 +521,7 @@ class ScheduleWidget2x2Provider : AppWidgetProvider() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         super.onReceive(context, intent)
-        if (ScheduleWidgetUpdater.handleWeekAction(context, intent?.action)) return
+        if (ScheduleWidgetUpdater.handleAction(context, intent?.action)) return
         if (intent?.action == ScheduleWidgetUpdater.ACTION_REFRESH) {
             if (intent.getBooleanExtra(ScheduleWidgetUpdater.EXTRA_RESET_TO_TODAY, false)) {
                 ScheduleWidgetUpdater.resetBrowseSelectionToToday(context)
@@ -525,7 +540,7 @@ class ScheduleWidget4x2Provider : AppWidgetProvider() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         super.onReceive(context, intent)
-        if (ScheduleWidgetUpdater.handleWeekAction(context, intent?.action)) return
+        if (ScheduleWidgetUpdater.handleAction(context, intent?.action)) return
         if (intent?.action == ScheduleWidgetUpdater.ACTION_REFRESH) {
             if (intent.getBooleanExtra(ScheduleWidgetUpdater.EXTRA_RESET_TO_TODAY, false)) {
                 ScheduleWidgetUpdater.resetBrowseSelectionToToday(context)

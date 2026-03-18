@@ -118,6 +118,7 @@ class SchoolCalendarApi(private val login: XJTULogin? = null) {
     private fun parseTerm(obj: JsonObject): SchoolTerm {
         val events = obj.getAsJsonArray("holidays")
             ?.mapNotNull { runCatching { parseEvent(it.asJsonObject) }.getOrNull() }
+            ?.sortedBy { it.startDate }
             ?: emptyList()
         return SchoolTerm(
             id = obj.get("id")?.asString ?: "",

@@ -30,3 +30,6 @@ output-metadata.json
 
 # Local config
 local.properties
+
+# KuiklyUI CMP migration project (separate git repo)
+XJTUTOOLBOX_CMP/

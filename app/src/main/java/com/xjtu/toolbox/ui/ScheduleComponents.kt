@@ -12,7 +12,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import top.yukonga.miuix.kmp.utils.overScrollVertical
@@ -28,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
@@ -182,25 +186,28 @@ fun ScheduleGrid(
             .verticalScroll(scrollState)
     ) {
         // ── 星期头 ──
-        Row(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 2.dp)) {
             Box(Modifier.width(LEFT_COL_WIDTH), contentAlignment = Alignment.Center) {
                 Text("", fontSize = 9.sp)
             }
-            DAY_HEADERS.forEach { day ->
+            DAY_HEADERS.forEachIndexed { idx, day ->
+                val todayDow = java.time.LocalDate.now().dayOfWeek.value
+                val isToday = isCurrentWeek && (idx + 1) == todayDow
                 Box(
                     Modifier
                         .weight(1f)
-                        .padding(vertical = 4.dp),
+                        .padding(vertical = 5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        day, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                        color = MiuixTheme.colorScheme.onSurface
+                        day, fontSize = 12.sp,
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isToday) MiuixTheme.colorScheme.primary
+                               else MiuixTheme.colorScheme.onSurface
                     )
                 }
             }
         }
-        HorizontalDivider(thickness = 0.5.dp)
 
         // ── 网格主体：BoxWithConstraints 精确定位 ──
         BoxWithConstraints(
@@ -210,7 +217,8 @@ fun ScheduleGrid(
         ) {
             val dayWidth = (maxWidth - LEFT_COL_WIDTH) / 7
 
-            // 背景层：节次编号 + 交替色网格
+            // 背景层：节次编号 + 细线网格
+            val gridLineColor = MiuixTheme.colorScheme.outline.copy(alpha = 0.12f)
             Column(Modifier.fillMaxSize()) {
                 for (section in 1..MAX_SECTIONS) {
                     Row(
@@ -224,120 +232,73 @@ fun ScheduleGrid(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "$section", fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.45f)
+                                )
                                 val timeStr = XjtuTime.getClassTime(section, isSummer)?.start
                                     ?.let { "%d:%02d".format(it.hour, it.minute) } ?: ""
                                 Text(
-                                    timeStr, fontSize = 8.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.6f)
-                                )
-                                Text(
-                                    "$section", fontSize = 9.sp,
+                                    timeStr, fontSize = 7.sp,
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.35f)
                                 )
                             }
                         }
+                        // 网格单元格用细边框代替棋盘色块
                         for (day in 1..7) {
                             Box(
                                 Modifier
                                     .width(dayWidth)
                                     .fillMaxHeight()
-                                    .background(
-                                        if ((section + day) % 2 == 0)
-                                            MiuixTheme.colorScheme.surfaceVariant
-                                        else
-                                            MiuixTheme.colorScheme.surface
-                                    )
+                                    .drawBehind {
+                                        // 底部水平线
+                                        drawLine(gridLineColor, Offset(0f, size.height), Offset(size.width, size.height), 0.5f.dp.toPx())
+                                        // 右侧垂直线
+                                        drawLine(gridLineColor, Offset(size.width, 0f), Offset(size.width, size.height), 0.5f.dp.toPx())
+                                    }
                             )
                         }
                     }
                 }
             }
 
-            // 前景层：课程卡片（绝对定位，冲突并列）
-            // 冲突检测：同一天的时间段重叠 → 并列显示
-            val slotLayouts = remember(slots) {
-                val result = mutableMapOf<ScheduleSlot, Pair<Int, Int>>() // slot → (colIndex, totalCols)
-                val byDay = slots
-                    .filter { it.slotDayOfWeek in 1..7 && it.slotStartSection in 1..MAX_SECTIONS }
-                    .groupBy { it.slotDayOfWeek }
-                byDay.forEach { (_, daySlots) ->
-                    val sorted = daySlots.sortedWith(compareBy({ it.slotStartSection }, { it.slotEndSection }))
-                    // 贪心分列
-                    val columns = mutableListOf<MutableList<ScheduleSlot>>()
-                    sorted.forEach { slot ->
-                        var placed = false
-                        for (col in columns) {
-                            val conflicts = col.any { ex ->
-                                ex.slotStartSection <= slot.slotEndSection && slot.slotStartSection <= ex.slotEndSection
-                            }
-                            if (!conflicts) { col.add(slot); placed = true; break }
-                        }
-                        if (!placed) columns.add(mutableListOf(slot))
-                    }
-                    // 计算每个 slot 的最大重叠列数
-                    columns.forEachIndexed { colIdx, col ->
-                        col.forEach { slot ->
-                            val overlapCols = columns.count { c ->
-                                c.any { o -> o.slotStartSection <= slot.slotEndSection && slot.slotStartSection <= o.slotEndSection }
-                            }
-                            result[slot] = Pair(colIdx, overlapCols)
-                        }
-                    }
-                }
-                result
-            }
+            // 前景层：课程卡片（冲突课程翻页显示）
+            val conflictGroups = remember(slots) { buildConflictGroups(slots) }
 
-            slots.forEach { slot ->
-                if (slot.slotDayOfWeek in 1..7 && slot.slotStartSection in 1..MAX_SECTIONS) {
-                    val (colIndex, totalCols) = slotLayouts[slot] ?: Pair(0, 1)
-                    val topOffset = SECTION_HEIGHT * (slot.slotStartSection - 1)
-                    val span = (slot.slotEndSection - slot.slotStartSection + 1)
-                        .coerceIn(1, MAX_SECTIONS - slot.slotStartSection + 1)
-                    val cellHeight = SECTION_HEIGHT * span
-                    val dayLeft = LEFT_COL_WIDTH + dayWidth * (slot.slotDayOfWeek - 1)
+            conflictGroups.forEach { group ->
+                val topOffset = SECTION_HEIGHT * (group.startSection - 1)
+                val span = group.endSection - group.startSection + 1
+                val cellHeight = SECTION_HEIGHT * span
+                val dayLeft = LEFT_COL_WIDTH + dayWidth * (group.dayOfWeek - 1)
 
-                    // 冲突课程：横向等分（每门课占 dayWidth/totalCols 宽度），全高显示
-                    // 水平分割避免用户误认为不同节次
-                    val gapDp = if (totalCols > 1) 1.dp else 0.dp
-                    val totalGap = gapDp * (totalCols - 1)
-                    val slotWidth = if (totalCols <= 1) dayWidth else (dayWidth - totalGap) / totalCols
-                    val leftOffset = dayLeft + (slotWidth + gapDp) * colIndex
-                    val slotHeight = cellHeight
-                    val slotTopOffset = topOffset
-
-
-
-                    Box(
-                        Modifier
-                            .offset(x = leftOffset, y = slotTopOffset)
-                            .width(slotWidth)
-                            .height(slotHeight)
-                            .padding(1.dp)
-                    ) {
-                        // 总览模式显示周次信息
-                        val weekStr = if (showWeeks) {
-                            (slot as? CourseItem)?.getWeeks()?.let { weeks ->
-                                if (weeks.isEmpty()) "" else {
-                                    val sorted = weeks.sorted()
-                                    val ranges = mutableListOf<String>()
-                                    var s = sorted[0]; var e = sorted[0]
-                                    for (i in 1 until sorted.size) {
-                                        if (sorted[i] == e + 1) e = sorted[i]
-                                        else { ranges.add(if (s == e) "$s" else "$s-$e"); s = sorted[i]; e = sorted[i] }
-                                    }
-                                    ranges.add(if (s == e) "$s" else "$s-$e")
-                                    ranges.joinToString(",") + "周"
-                                }
-                            } ?: ""
-                        } else ""
+                Box(
+                    Modifier
+                        .offset(x = dayLeft, y = topOffset)
+                        .width(dayWidth)
+                        .height(cellHeight)
+                        .padding(1.dp)
+                ) {
+                    if (group.slots.size == 1) {
+                        val slot = group.slots[0]
+                        val slotSpan = (slot.slotEndSection - slot.slotStartSection + 1)
+                            .coerceIn(1, MAX_SECTIONS - slot.slotStartSection + 1)
                         CourseCell(
                             name = slot.slotName,
                             location = slot.slotLocation,
-                            weekInfo = weekStr,
-                            spanSections = span,
+                            weekInfo = formatWeekInfo(slot, showWeeks),
+                            spanSections = slotSpan,
                             color = courseColor(slot.slotName, allCourseNames),
                             onClick = { onSlotClick(slot) }
+                        )
+                    } else {
+                        FlippableCourseCell(
+                            slots = group.slots,
+                            groupStartSection = group.startSection,
+                            groupSpan = span,
+                            allCourseNames = allCourseNames,
+                            showWeeks = showWeeks,
+                            onSlotClick = onSlotClick
                         )
                     }
                 }
@@ -402,6 +363,135 @@ fun ScheduleGrid(
     }
 }
 
+// ── 冲突分组 ──
+
+private data class ConflictGroup(
+    val slots: List<ScheduleSlot>,
+    val dayOfWeek: Int,
+    val startSection: Int,
+    val endSection: Int
+)
+
+private fun buildConflictGroups(slots: List<ScheduleSlot>): List<ConflictGroup> {
+    val validSlots = slots.filter { it.slotDayOfWeek in 1..7 && it.slotStartSection in 1..MAX_SECTIONS }
+    val byDay = validSlots.groupBy { it.slotDayOfWeek }
+    val groups = mutableListOf<ConflictGroup>()
+
+    byDay.forEach { (day, daySlots) ->
+        val n = daySlots.size
+        val parent = IntArray(n) { it }
+        fun find(x: Int): Int {
+            var r = x; while (parent[r] != r) r = parent[r]
+            var c = x; while (c != r) { val next = parent[c]; parent[c] = r; c = next }
+            return r
+        }
+        fun union(a: Int, b: Int) { parent[find(a)] = find(b) }
+
+        for (i in 0 until n) {
+            for (j in i + 1 until n) {
+                val a = daySlots[i]; val b = daySlots[j]
+                if (a.slotStartSection <= b.slotEndSection && b.slotStartSection <= a.slotEndSection) {
+                    union(i, j)
+                }
+            }
+        }
+
+        daySlots.indices.groupBy { find(it) }.values.forEach { indices ->
+            val groupSlots = indices.map { daySlots[it] }
+            groups.add(ConflictGroup(
+                slots = groupSlots,
+                dayOfWeek = day,
+                startSection = groupSlots.minOf { it.slotStartSection },
+                endSection = groupSlots.maxOf { it.slotEndSection.coerceAtMost(MAX_SECTIONS) }
+            ))
+        }
+    }
+    return groups
+}
+
+private fun formatWeekInfo(slot: ScheduleSlot, showWeeks: Boolean): String {
+    if (!showWeeks) return ""
+    return (slot as? CourseItem)?.getWeeks()?.let { weeks ->
+        if (weeks.isEmpty()) "" else {
+            val sorted = weeks.sorted()
+            val ranges = mutableListOf<String>()
+            var s = sorted[0]; var e = sorted[0]
+            for (i in 1 until sorted.size) {
+                if (sorted[i] == e + 1) e = sorted[i]
+                else { ranges.add(if (s == e) "$s" else "$s-$e"); s = sorted[i]; e = sorted[i] }
+            }
+            ranges.add(if (s == e) "$s" else "$s-$e")
+            ranges.joinToString(",") + "周"
+        }
+    } ?: ""
+}
+
+// ── 冲突课程翻页卡片 ──
+
+@Composable
+private fun FlippableCourseCell(
+    slots: List<ScheduleSlot>,
+    groupStartSection: Int,
+    groupSpan: Int,
+    allCourseNames: List<String>,
+    showWeeks: Boolean,
+    onSlotClick: (ScheduleSlot) -> Unit
+) {
+    val pagerState = rememberPagerState(pageCount = { slots.size })
+
+    Box(Modifier.fillMaxSize()) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            val slot = slots[page]
+            val slotSpan = (slot.slotEndSection - slot.slotStartSection + 1)
+                .coerceIn(1, MAX_SECTIONS - slot.slotStartSection + 1)
+            val relativeOffset = slot.slotStartSection - groupStartSection
+
+            Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(SECTION_HEIGHT * slotSpan)
+                        .offset(y = SECTION_HEIGHT * relativeOffset)
+                ) {
+                    CourseCell(
+                        name = slot.slotName,
+                        location = slot.slotLocation,
+                        weekInfo = formatWeekInfo(slot, showWeeks),
+                        spanSections = slotSpan,
+                        color = courseColor(slot.slotName, allCourseNames),
+                        onClick = { onSlotClick(slot) }
+                    )
+                }
+            }
+        }
+
+        // 翻页指示器
+        Row(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 2.dp)
+                .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 3.dp, vertical = 1.5.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            repeat(slots.size) { index ->
+                Box(
+                    Modifier
+                        .size(4.dp)
+                        .background(
+                            if (pagerState.currentPage == index) Color.White
+                            else Color.White.copy(alpha = 0.4f),
+                            CircleShape
+                        )
+                )
+            }
+        }
+    }
+}
+
 // ── 课程卡片 ──
 
 @Composable
@@ -413,24 +503,30 @@ fun CourseCell(
     color: Color,
     onClick: () -> Unit = {}
 ) {
+    val textColor = if (color.luminance() > 0.5f) Color.Black else Color.White
     top.yukonga.miuix.kmp.basic.Card(
         modifier = Modifier
             .fillMaxSize(),
         onClick = onClick,
-        cornerRadius = 8.dp,
+        cornerRadius = 12.dp,
         pressFeedbackType = top.yukonga.miuix.kmp.utils.PressFeedbackType.Sink,
-        colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = color.copy(alpha = 0.88f))
+        colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = color.copy(alpha = 0.85f))
     ) {
         Column(
             Modifier
                 .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.08f), Color.Black.copy(alpha = 0.10f))
+                    )
+                )
                 .padding(horizontal = 4.dp, vertical = 3.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 name, fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                color = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                color = textColor,
                 textAlign = TextAlign.Center,
                 maxLines = when {
                     spanSections >= 4 -> 5
@@ -444,7 +540,7 @@ fun CourseCell(
                 Spacer(Modifier.height(1.dp))
                 Text(
                     "@$location", fontSize = 8.sp,
-                    color = (if (color.luminance() > 0.5f) Color.Black else Color.White).copy(alpha = 0.85f),
+                    color = textColor.copy(alpha = 0.85f),
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -453,7 +549,7 @@ fun CourseCell(
             if (weekInfo.isNotEmpty() && spanSections >= 2) {
                 Text(
                     weekInfo, fontSize = 7.sp,
-                    color = (if (color.luminance() > 0.5f) Color.Black else Color.White).copy(alpha = 0.65f),
+                    color = textColor.copy(alpha = 0.65f),
                     textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }

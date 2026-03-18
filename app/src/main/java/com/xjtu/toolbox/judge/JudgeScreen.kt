@@ -16,7 +16,6 @@ import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.extra.SuperBottomSheet
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 
@@ -75,6 +74,7 @@ fun JudgeScreen(
     var autoJudgeProgress by remember { mutableIntStateOf(0) }
     var autoJudgeTotal by remember { mutableIntStateOf(0) }
     var autoJudgeMessage by remember { mutableStateOf("") }
+    var undoingKey by remember { mutableStateOf<String?>(null) }
 
     // 确认对话框状态（提升到顶层，避免条件分支内状态丢失）
     val showConfirmDialog = remember { mutableStateOf(false) }
@@ -145,53 +145,61 @@ fun JudgeScreen(
                     title = "确认一键好评",
                     onDismissRequest = { showConfirmDialog.value = false }
                 ) {
-                    Text("将为 ${unfinishedList.size} 门课程全部提交好评，确定继续？")
-                    Spacer(Modifier.height(20.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(
-                            onClick = { showConfirmDialog.value = false },
-                            modifier = Modifier.weight(1f),
-                            colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColors(color = MiuixTheme.colorScheme.secondaryContainer)
-                        ) { Text("取消", color = MiuixTheme.colorScheme.onSecondaryContainer) }
-                        Button(onClick = {
-                            showConfirmDialog.value = false
-                            scope.launch {
-                                isAutoJudging = true
-                                autoJudgeTotal = unfinishedList.size
-                                autoJudgeProgress = 0
-                                autoJudgeMessage = "正在评教..."
-                                var failCount = 0
-                                var lastError = ""
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .imePadding()
+                            .navigationBarsPadding()
+                            .padding(bottom = 8.dp)
+                    ) {
+                        Text("将为 ${unfinishedList.size} 门课程全部提交好评，确定继续？")
+                        Spacer(Modifier.height(20.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = { showConfirmDialog.value = false },
+                                modifier = Modifier.weight(1f),
+                                colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColors(color = MiuixTheme.colorScheme.secondaryContainer)
+                            ) { Text("取消", color = MiuixTheme.colorScheme.onSecondaryContainer) }
+                            Button(onClick = {
+                                showConfirmDialog.value = false
+                                scope.launch {
+                                    isAutoJudging = true
+                                    autoJudgeTotal = unfinishedList.size
+                                    autoJudgeProgress = 0
+                                    autoJudgeMessage = "正在评教..."
+                                    var failCount = 0
+                                    var lastError = ""
 
-                                try {
-                                    for ((index, q) in unfinishedList.withIndex()) {
-                                        autoJudgeMessage = "正在评教: ${q.KCM} (${index + 1}/$autoJudgeTotal)"
-                                        autoJudgeProgress = index
+                                    try {
+                                        for ((index, q) in unfinishedList.withIndex()) {
+                                            autoJudgeMessage = "正在评教: ${q.KCM} (${index + 1}/$autoJudgeTotal)"
+                                            autoJudgeProgress = index
 
-                                        try {
-                                            withContext(Dispatchers.IO) {
-                                                val filledData = api.autoFillQuestionnaire(q, username)
-                                                api.submitQuestionnaire(q, filledData)
+                                            try {
+                                                withContext(Dispatchers.IO) {
+                                                    val filledData = api.autoFillQuestionnaire(q, username)
+                                                    api.submitQuestionnaire(q, filledData)
+                                                }
+                                            } catch (e: Exception) {
+                                                failCount++
+                                                lastError = "${q.KCM}: ${e.message}"
                                             }
-                                        } catch (e: Exception) {
-                                            failCount++
-                                            lastError = "${q.KCM}: ${e.message}"
-                                        }
 
-                                        autoJudgeProgress = index + 1
-                                        delay(300) // 间隔避免被限流
+                                            autoJudgeProgress = index + 1
+                                            delay(300) // 间隔避免被限流
+                                        }
+                                        autoJudgeMessage = if (failCount == 0) "全部评教完成！"
+                                            else "${autoJudgeTotal - failCount}门成功，${failCount}门失败（$lastError）"
+                                        // 刷新列表
+                                        loadData()
+                                    } catch (e: Exception) {
+                                        autoJudgeMessage = "评教出错: ${e.message}"
+                                    } finally {
+                                        isAutoJudging = false
                                     }
-                                    autoJudgeMessage = if (failCount == 0) "全部评教完成！"
-                                        else "${autoJudgeTotal - failCount}门成功，${failCount}门失败（$lastError）"
-                                    // 刷新列表
-                                    loadData()
-                                } catch (e: Exception) {
-                                    autoJudgeMessage = "评教出错: ${e.message}"
-                                } finally {
-                                    isAutoJudging = false
                                 }
-                            }
-                    }, modifier = Modifier.weight(1f)) { Text("确认") }
+                            }, modifier = Modifier.weight(1f)) { Text("确认") }
+                        }
                     }
                 }
 
@@ -204,7 +212,10 @@ fun JudgeScreen(
                 ) {
                     Button(
                         onClick = { if (!isAutoJudging) showConfirmDialog.value = true },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth(0.84f)
+                            .height(44.dp)
+                            .align(Alignment.CenterHorizontally),
                         enabled = !isAutoJudging
                     ) {
                         Icon(Icons.Default.ThumbUp, contentDescription = null)
@@ -291,10 +302,13 @@ fun JudgeScreen(
                                 contentPadding = PaddingValues(vertical = 12.dp)
                             ) {
                                 items(displayList, key = { "${it.WJDM}_${it.JXBID}_${it.BPR}" }) { q ->
+                                    val qKey = "${q.WJDM}_${q.JXBID}_${q.BPR}"
                                     QuestionnaireCard(
                                         q = q,
                                         finished = tab == 1,
+                                        undoing = undoingKey == qKey,
                                         onUndo = if (tab == 1) { {
+                                            undoingKey = qKey
                                             scope.launch {
                                                 try {
                                                     val (success, msg) = withContext(Dispatchers.IO) {
@@ -307,6 +321,8 @@ fun JudgeScreen(
                                                     }
                                                 } catch (e: Exception) {
                                                     errorMessage = "撤回失败: ${e.message}"
+                                                } finally {
+                                                    undoingKey = null
                                                 }
                                             }
                                         } } else null
@@ -325,7 +341,12 @@ fun JudgeScreen(
  * 单个评教课程卡片
  */
 @Composable
-private fun QuestionnaireCard(q: Questionnaire, finished: Boolean, onUndo: (() -> Unit)? = null) {
+private fun QuestionnaireCard(
+    q: Questionnaire,
+    finished: Boolean,
+    undoing: Boolean = false,
+    onUndo: (() -> Unit)? = null
+) {
     val typeLabel = when (q.PGLXDM) {
         "01" -> "期末评教"
         "05" -> "过程评教"
@@ -386,11 +407,21 @@ private fun QuestionnaireCard(q: Questionnaire, finished: Boolean, onUndo: (() -
                 }
             }
             if (finished && onUndo != null) {
-                TextButton(
-                    text = "撤回",
+                Button(
                     onClick = onUndo,
-                    modifier = Modifier.height(32.dp)
-                )
+                    enabled = !undoing,
+                    modifier = Modifier.height(34.dp),
+                    colors = top.yukonga.miuix.kmp.basic.ButtonDefaults.buttonColors(
+                        color = MiuixTheme.colorScheme.secondaryContainer
+                    )
+                ) {
+                    Text(
+                        if (undoing) "撤回中..." else "撤回评教",
+                        color = MiuixTheme.colorScheme.onSecondaryContainer,
+                        style = MiuixTheme.textStyles.footnote1,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }

@@ -6,15 +6,20 @@ import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.xjtu.toolbox.R
 import com.xjtu.toolbox.util.XjtuTime
+import kotlin.math.abs
 
 class ScheduleWidgetRemoteViewsService : RemoteViewsService() {
     override fun onGetViewFactory(intent: Intent): RemoteViewsFactory {
-        return ScheduleWidgetCourseFactory(applicationContext)
+        val size = intent.getStringExtra("widget_size")
+            ?.let { runCatching { WidgetSize.valueOf(it) }.getOrNull() }
+            ?: WidgetSize.SMALL
+        return ScheduleWidgetCourseFactory(applicationContext, size)
     }
 }
 
 private class ScheduleWidgetCourseFactory(
-    private val context: Context
+    private val context: Context,
+    private val widgetSize: WidgetSize
 ) : RemoteViewsService.RemoteViewsFactory {
 
     private val toneBackgrounds = intArrayOf(
@@ -31,7 +36,11 @@ private class ScheduleWidgetCourseFactory(
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
-        courses = ScheduleWidgetUpdater.loadScheduleData(context).courses
+        val allCourses = ScheduleWidgetUpdater.loadScheduleData(context).courses
+        courses = when (widgetSize) {
+            WidgetSize.SMALL -> allCourses.take(2)
+            WidgetSize.LARGE -> allCourses.take(4)
+        }
     }
 
     override fun onDestroy() {
@@ -46,7 +55,7 @@ private class ScheduleWidgetCourseFactory(
         val views = RemoteViews(context.packageName, R.layout.widget_schedule_course_item)
         val toneIndex = ((course.name + course.location + course.startSection + course.endSection)
             .hashCode()
-            .let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }) % toneBackgrounds.size
+            .let { if (it == Int.MIN_VALUE) 0 else abs(it) }) % toneBackgrounds.size
         views.setInt(
             R.id.widget_course_item_root,
             "setBackgroundResource",

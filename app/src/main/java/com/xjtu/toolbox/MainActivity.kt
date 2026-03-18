@@ -117,29 +117,38 @@ import com.xjtu.toolbox.judge.JudgeScreen
 import com.xjtu.toolbox.score.ScoreReportScreen
 import com.xjtu.toolbox.ui.theme.XJTUToolBoxTheme
 import com.xjtu.toolbox.util.CredentialStore
+import com.xjtu.toolbox.widget.CampusCardWidgetUpdater
+import com.xjtu.toolbox.widget.ScheduleWidgetUpdater
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_LAUNCH_ROUTE = "extra_launch_route"
+        const val EXTRA_LAUNCH_TAB = "extra_launch_tab"
     }
 
     /** 标记应用是否准备好（登录恢复完成后为 true），供 SplashScreen 决定何时消失 */
     var isAppReady = false
     private val launchRouteState = mutableStateOf<String?>(null)
+    private val launchTabState = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         splash.setKeepOnScreenCondition { !isAppReady }
         super.onCreate(savedInstanceState)
-        launchRouteState.value = intent?.getStringExtra(EXTRA_LAUNCH_ROUTE)
+        val launchRoute = intent?.getStringExtra(EXTRA_LAUNCH_ROUTE)
+        val launchTab = intent?.getStringExtra(EXTRA_LAUNCH_TAB)
+        launchRouteState.value = launchRoute
+        launchTabState.value = launchTab ?: if (launchRoute == Routes.SCHEDULE) BottomTab.COURSES.name else null
         enableEdgeToEdge()
         setContent {
             XJTUToolBoxTheme {
                 AppNavigation(
                     initialRoute = launchRouteState.value,
                     onInitialRouteConsumed = { launchRouteState.value = null },
+                    initialTab = launchTabState.value,
+                    onInitialTabConsumed = { launchTabState.value = null },
                     onReady = { isAppReady = true }
                 )
             }
@@ -149,7 +158,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        launchRouteState.value = intent.getStringExtra(EXTRA_LAUNCH_ROUTE)
+        val launchRoute = intent.getStringExtra(EXTRA_LAUNCH_ROUTE)
+        val launchTab = intent.getStringExtra(EXTRA_LAUNCH_TAB)
+        launchRouteState.value = launchRoute
+        launchTabState.value = launchTab ?: if (launchRoute == Routes.SCHEDULE) BottomTab.COURSES.name else null
     }
 }
 
@@ -191,7 +203,7 @@ enum class BottomTab(
     val unselectedIcon: ImageVector
 ) {
     HOME("首页", Icons.Filled.Home, Icons.Outlined.Home),
-    ACADEMIC("教务", Icons.Filled.School, Icons.Outlined.School),
+    COURSES("课程", Icons.Filled.CalendarMonth, Icons.Outlined.CalendarMonth),
     TOOLS("工具", Icons.Filled.Build, Icons.Outlined.Build),
     PROFILE("我的", Icons.Filled.Person, Icons.Outlined.Person)
 }
@@ -797,6 +809,8 @@ class AppLoginStateViewModel(application: android.app.Application) : androidx.li
 fun AppNavigation(
     initialRoute: String? = null,
     onInitialRouteConsumed: () -> Unit = {},
+    initialTab: String? = null,
+    onInitialTabConsumed: () -> Unit = {},
     onReady: () -> Unit = {}
 ) {
     val navController = rememberNavController()
@@ -808,36 +822,34 @@ fun AppNavigation(
 
     LaunchedEffect(initialRoute) {
         val route = initialRoute
-        if (route.isNullOrBlank() || route == Routes.MAIN) return@LaunchedEffect
+        if (route.isNullOrBlank() || route == Routes.MAIN) {
+            onInitialRouteConsumed()
+            return@LaunchedEffect
+        }
 
         if (route == Routes.SCHEDULE) {
-            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-            val isOnline = cm?.activeNetwork != null &&
-                    cm.getNetworkCapabilities(cm.activeNetwork)
-                        ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-
-            if (loginState.jwxtLogin != null) {
-                navController.navigate(route) { launchSingleTop = true }
-            } else if (!isOnline) {
-                navController.navigate(route) { launchSingleTop = true }
-            } else if (loginState.hasCredentials) {
-                val loginResult = kotlinx.coroutines.withTimeoutOrNull(15_000L) {
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        loginState.autoLogin(LoginType.JWXT)
-                    }
-                }
-                if (loginResult != null || loginState.jwxtLogin != null) {
-                    navController.navigate(route) { launchSingleTop = true }
-                } else {
-                    navController.navigate(Routes.login(LoginType.JWXT, route)) { launchSingleTop = true }
-                }
-            } else {
-                navController.navigate(Routes.login(LoginType.JWXT, route)) { launchSingleTop = true }
-            }
+            navController.navigate(Routes.MAIN) { launchSingleTop = true }
         } else {
             navController.navigate(route) { launchSingleTop = true }
         }
         onInitialRouteConsumed()
+    }
+
+    LaunchedEffect(initialTab) {
+        if (initialTab != BottomTab.COURSES.name) return@LaunchedEffect
+        if (loginState.jwxtLogin != null || !loginState.hasCredentials) return@LaunchedEffect
+
+        val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        val isOnline = cm?.activeNetwork != null &&
+                cm.getNetworkCapabilities(cm.activeNetwork)
+                    ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        if (!isOnline) return@LaunchedEffect
+
+        kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                loginState.autoLogin(LoginType.JWXT)
+            }
+        }
     }
 
     // 当 YWTB 用户信息获取到时，缓存全名（下次启动秒显示，作为 nsaProfile?.name 的 fallback）
@@ -948,6 +960,13 @@ fun AppNavigation(
         kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
             view.post { cont.resume(Unit, null) }
         }
+
+        // 强制刷新桌面小组件（修复升级后旧实例点击行为滞后，需要重建才能生效的问题）
+        runCatching {
+            ScheduleWidgetUpdater.requestUpdate(context, resetToToday = false)
+            CampusCardWidgetUpdater.requestUpdate(context)
+        }
+
         onReady()
 
         // 有凭据且尚未建立任何登录会话 → 启动后台恢复
@@ -1168,7 +1187,15 @@ fun AppNavigation(
     ) {
 
         composable(Routes.MAIN) {
-            MainScreen(navController = navController, loginState = loginState, credentialStore = credentialStore, isRestoring = isRestoring, restoreStep = restoreStep)
+            MainScreen(
+                navController = navController,
+                loginState = loginState,
+                credentialStore = credentialStore,
+                isRestoring = isRestoring,
+                restoreStep = restoreStep,
+                pendingTab = initialTab,
+                onPendingTabConsumed = onInitialTabConsumed
+            )
         }
 
         composable(
@@ -1207,7 +1234,14 @@ fun AppNavigation(
             loginState.attendanceLogin?.let { AttendanceScreen(login = it, onBack = { navController.popBackStack() }) } ?: LaunchedEffect(Unit) { navController.popBackStack() }
         }
         composable(Routes.SCHEDULE) {
-            ScheduleScreen(login = loginState.jwxtLogin, studentId = loginState.activeUsername, onBack = { navController.popBackStack() })
+            MainScreen(
+                navController = navController,
+                loginState = loginState,
+                credentialStore = credentialStore,
+                isRestoring = isRestoring,
+                restoreStep = restoreStep,
+                pendingTab = BottomTab.COURSES.name
+            )
         }
         composable(Routes.JWAPP_SCORE) {
             JwappScoreScreen(login = loginState.jwappLogin, jwxtLogin = loginState.jwxtLogin, studentId = loginState.activeUsername, onBack = { navController.popBackStack() })
@@ -1302,12 +1336,30 @@ fun AppNavigation(
 // ── 主屏幕（底部导航栏）──────────────────
 
 @Composable
-private fun MainScreen(navController: NavHostController, loginState: AppLoginState, credentialStore: CredentialStore, isRestoring: Boolean = false, restoreStep: String = "") {
+private fun MainScreen(
+    navController: NavHostController,
+    loginState: AppLoginState,
+    credentialStore: CredentialStore,
+    isRestoring: Boolean = false,
+    restoreStep: String = "",
+    pendingTab: String? = null,
+    onPendingTabConsumed: () -> Unit = {}
+) {
     var selectedTabOrdinal by rememberSaveable { mutableIntStateOf(0) }
     val selectedTab = BottomTab.entries[selectedTabOrdinal.coerceIn(0, BottomTab.entries.size - 1)]
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var lastBackPressTime by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(pendingTab) {
+        val tabName = pendingTab ?: return@LaunchedEffect
+        val matched = BottomTab.entries.firstOrNull { it.name == tabName }
+        if (matched != null) {
+            selectedTabOrdinal = matched.ordinal
+        }
+        onPendingTabConsumed()
+    }
+
     BackHandler {
         if (selectedTab != BottomTab.HOME) {
             selectedTabOrdinal = BottomTab.HOME.ordinal
@@ -1411,7 +1463,7 @@ private fun MainScreen(navController: NavHostController, loginState: AppLoginSta
 
     // ── 各 Tab 独立的滚动折叠状态 ──
     val homeScrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
-    val academicScrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
+    val coursesScrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val toolsScrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     val profileScrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
 
@@ -1432,19 +1484,19 @@ private fun MainScreen(navController: NavHostController, loginState: AppLoginSta
             TopAppBar(
                 title = when (selectedTab) {
                     BottomTab.HOME -> "岱宗盒子"
-                    BottomTab.ACADEMIC -> "教务服务"
+                    BottomTab.COURSES -> "课程"
                     BottomTab.TOOLS -> "实用工具"
                     BottomTab.PROFILE -> "我的"
                 },
                 largeTitle = when (selectedTab) {
                     BottomTab.HOME -> homeGreeting
-                    BottomTab.ACADEMIC -> "教务服务"
+                    BottomTab.COURSES -> "我的课程"
                     BottomTab.TOOLS -> "实用工具"
                     BottomTab.PROFILE -> "我的"
                 },
                 scrollBehavior = when (selectedTab) {
                     BottomTab.HOME -> homeScrollBehavior
-                    BottomTab.ACADEMIC -> academicScrollBehavior
+                    BottomTab.COURSES -> coursesScrollBehavior
                     BottomTab.TOOLS -> toolsScrollBehavior
                     BottomTab.PROFILE -> profileScrollBehavior
                 }
@@ -1513,8 +1565,16 @@ private fun MainScreen(navController: NavHostController, loginState: AppLoginSta
                                     }
                             ) {
                                 when (tab) {
-                                    BottomTab.HOME -> HomeTab(loginState, isRestoring = isRestoring, onNavigate = onNavigateWithNetCheck, onNavigateWithLogin = ::navigateWithLogin, onNavigateToProfile = { selectedTabOrdinal = BottomTab.PROFILE.ordinal }, scrollBehavior = homeScrollBehavior)
-                                    BottomTab.ACADEMIC -> AcademicTab(loginState, ::navigateWithLogin, onNavigateWithNetCheck, scrollBehavior = academicScrollBehavior)
+                                    BottomTab.HOME -> HomeTab(
+                                        loginState,
+                                        isRestoring = isRestoring,
+                                        onNavigate = onNavigateWithNetCheck,
+                                        onNavigateWithLogin = ::navigateWithLogin,
+                                        onNavigateToProfile = { selectedTabOrdinal = BottomTab.PROFILE.ordinal },
+                                        onNavigateToCourses = { selectedTabOrdinal = BottomTab.COURSES.ordinal },
+                                        scrollBehavior = homeScrollBehavior
+                                    )
+                                    BottomTab.COURSES -> CoursesTab(loginState, ::navigateWithLogin, onNavigateWithNetCheck, scrollBehavior = coursesScrollBehavior)
                                     BottomTab.TOOLS -> ToolsTab(loginState, ::navigateWithLogin, onNavigateWithNetCheck, scrollBehavior = toolsScrollBehavior)
                                     BottomTab.PROFILE -> ProfileTab(loginState, ::navigateWithLogin, credentialStore, scrollBehavior = profileScrollBehavior)
                                 }
@@ -1603,6 +1663,7 @@ private fun HomeTab(
     onNavigate: (String) -> Unit,
     onNavigateWithLogin: (String, LoginType) -> Unit,
     onNavigateToProfile: () -> Unit = {},
+    onNavigateToCourses: () -> Unit = {},
     scrollBehavior: ScrollBehavior? = null
 ) {
     Column(
@@ -1672,7 +1733,8 @@ private fun HomeTab(
                     onNavigateWithLogin(Routes.CAMPUS_CARD, LoginType.CAMPUS_CARD)
                 }
                 HomeQuickAction(Icons.Default.CalendarMonth, "课表", colorIndigo) {
-                    onNavigateWithLogin(Routes.SCHEDULE, LoginType.JWXT)
+                    onNavigate(Routes.MAIN)
+                    onNavigateToCourses()
                 }
                 HomeQuickAction(Icons.Default.QrCode, "付款码", colorTeal) {
                     onNavigateWithLogin(Routes.PAYMENT_CODE, LoginType.JWXT)
@@ -1785,7 +1847,10 @@ private fun HomeTab(
                     }
 
                     Card(
-                        onClick = { onNavigateWithLogin(Routes.SCHEDULE, LoginType.JWXT) },
+                        onClick = {
+                            onNavigate(Routes.MAIN)
+                            onNavigateToCourses()
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         cornerRadius = 20.dp,
                         colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surfaceVariant),
@@ -1908,6 +1973,7 @@ private fun HomeTab(
                                                 context.getSharedPreferences("campus_card", 0).edit()
                                                     .putString("card_recent_tx_cache", recentJson)
                                                     .apply()
+                                                com.xjtu.toolbox.widget.CampusCardWidgetUpdater.requestUpdate(context)
                                             } catch (_: Exception) {}
                                             isRefreshingCard = false
                                         }
@@ -1992,7 +2058,10 @@ private fun HomeTab(
             val svcDeepPurple = androidx.compose.ui.graphics.Color(0xFF512DA8)
             svcRow(
                 { m -> HomeServiceCard(Icons.Default.CreditCard, "校园卡", "账单 · 洞察", svcGreen, m) { onNavigateWithLogin(Routes.CAMPUS_CARD, LoginType.CAMPUS_CARD) } },
-                { m -> HomeServiceCard(Icons.Default.CalendarMonth, "课表考试", "课表 · 考试", svcIndigo, m) { onNavigateWithLogin(Routes.SCHEDULE, LoginType.JWXT) } }
+                { m -> HomeServiceCard(Icons.Default.CalendarMonth, "课表考试", "课表 · 考试", svcIndigo, m) {
+                    onNavigate(Routes.MAIN)
+                    onNavigateToCourses()
+                } }
             )
             svcRow(
                 { m -> HomeServiceCard(Icons.Default.Assessment, "成绩查询", "成绩 · GPA", svcPurple, m) { onNavigateWithLogin(Routes.JWAPP_SCORE, LoginType.JWAPP) } },
@@ -2028,46 +2097,22 @@ private fun HomeTab(
 }
 
 // ══════════════════════════════════════════
-//  Tab 2 — 教务
+//  Tab 2 — 课程
 // ══════════════════════════════════════════
 
 @Composable
-private fun AcademicTab(loginState: AppLoginState, onNavigateWithLogin: (String, LoginType) -> Unit, onNavigate: (String) -> Unit = {}, scrollBehavior: ScrollBehavior? = null) {
-    Column(
+private fun CoursesTab(loginState: AppLoginState, onNavigateWithLogin: (String, LoginType) -> Unit, onNavigate: (String) -> Unit = {}, scrollBehavior: ScrollBehavior? = null) {
+    Box(
         Modifier
             .fillMaxSize()
             .then(if (scrollBehavior != null) Modifier.nestedScroll(scrollBehavior.nestedScrollConnection) else Modifier)
-            .overScrollVertical()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
     ) {
-        Spacer(Modifier.height(12.dp))
-
-        val cIndigo = androidx.compose.ui.graphics.Color(0xFF283593)
-        val cPurple = androidx.compose.ui.graphics.Color(0xFF7B1FA2)
-        val cBrown = androidx.compose.ui.graphics.Color(0xFF4E342E)
-        val cPink = androidx.compose.ui.graphics.Color(0xFFC2185B)
-        val cCyan = androidx.compose.ui.graphics.Color(0xFF00838F)
-        val cGreen = androidx.compose.ui.graphics.Color(0xFF2E7D32)
-        val cTeal = androidx.compose.ui.graphics.Color(0xFF00796B)
-        val cOrange = androidx.compose.ui.graphics.Color(0xFFE65100)
-        val cDeepPurple = androidx.compose.ui.graphics.Color(0xFF512DA8)
-
-        SectionLabel("本科生")
-        ServiceCard(Icons.Default.CalendarMonth, "课表 / 考试", "课表安排 · 考试时间 · 教材查询", loginState.jwxtLogin != null, iconColor = cIndigo) { onNavigateWithLogin(Routes.SCHEDULE, LoginType.JWXT) }
-        ServiceCard(Icons.Default.Assessment, "成绩查询", "查看成绩 / GPA / 含报表补充", loginState.jwappLogin != null, iconColor = cPurple) { onNavigateWithLogin(Routes.JWAPP_SCORE, LoginType.JWAPP) }
-        ServiceCard(Icons.Default.DateRange, "考勤查询", "查看课堂出勤情况", loginState.attendanceLogin != null, iconColor = cBrown) { onNavigateWithLogin(Routes.ATTENDANCE, LoginType.ATTENDANCE) }
-        ServiceCard(Icons.Default.RateReview, "本科评教", "一键自动评教", loginState.jwxtLogin != null, iconColor = cPink) { onNavigateWithLogin(Routes.JUDGE, LoginType.JWXT) }
-        ServiceCard(Icons.Default.TravelExplore, "全校课表查询", "全校课程检索 · 地点 · 选课人数", loginState.jwxtLogin != null, iconColor = cCyan) { onNavigateWithLogin(Routes.SCHOOL_COURSE, LoginType.JWXT) }
-        ServiceCard(Icons.Default.EventNote, "校历", "学期安排 · 假期 · 考试周", true, iconColor = cTeal) { onNavigate(Routes.SCHOOL_CALENDAR) }
-
-        Spacer(Modifier.height(16.dp))
-
-        SectionLabel("课程学习")
-        ServiceCard(Icons.Default.OndemandVideo, "课程回放", "课程录播 · 倍速回看", loginState.classLogin != null, iconColor = cDeepPurple) { onNavigateWithLogin(Routes.CLASS_REPLAY, LoginType.CLASS) }
-        ServiceCard(Icons.Default.School, "思源学堂", "课件 · 作业 · 课堂回放", loginState.lmsLogin != null, iconColor = cIndigo) { onNavigateWithLogin(Routes.LMS, LoginType.LMS) }
-
-        Spacer(Modifier.height(100.dp))
+        ScheduleScreen(
+            login = loginState.jwxtLogin,
+            studentId = loginState.activeUsername,
+            onBack = {},
+            showTopBar = false
+        )
     }
 }
 
@@ -3715,6 +3760,19 @@ private val CHANGELOGS: Map<String, VersionChangelog> = mapOf(
             "🎬" to "新增收藏动画与提示反馈，交互更顺滑",
             "📌" to "场馆列表支持按收藏状态优先排序",
             "📝" to "补充版本号与更新日志，完善发版信息"
+        )
+    ),
+    "3.0" to VersionChangelog(
+        items = listOf(
+            "🧭" to "导航结构升级：教务 Tab 重构为课程 Tab，首页/小组件统一直达“我的课程”",
+            "🗓️" to "课程页重构：支持嵌入式无边界头部，学期/Tab 交互与刷新状态提示优化",
+            "🧩" to "小组件体系稳定化：课表与校园卡回退 RemoteViews 链路，兼容更多 OEM 桌面",
+            "💳" to "校园卡小组件 2×2 紧凑重排，金额显示与三餐布局优化，减少溢出与加载异常",
+            "✅" to "课表链路修复：从小组件进入后登录恢复可自动在线刷新，不再长期停留离线缓存",
+            "🛠️" to "评教、成绩、场馆、主题与多处页面细节修复，整体体验与稳定性提升"
+        ),
+        issues = listOf(
+            "少数桌面宿主对旧小组件实例缓存较重，升级后建议删除并重新添加校园卡/课表小组件"
         )
     )
 )

@@ -32,11 +32,11 @@ object CampusCardWidgetUpdater {
         val dinner = prefs.getFloat("card_today_dinner_cache", -1f)
         val cacheTime = prefs.getLong("card_cache_time", 0L)
 
-        val balanceText = if (balance < 0) "未获取" else "¥%.2f".format(balance)
-        val todayText = if (todaySpend < 0) "--" else "¥%.2f".format(todaySpend)
-        val breakfastText = if (breakfast < 0) "--" else "¥%.2f".format(breakfast)
-        val lunchText = if (lunch < 0) "--" else "¥%.2f".format(lunch)
-        val dinnerText = if (dinner < 0) "--" else "¥%.2f".format(dinner)
+        val balanceText = formatMoney(balance)
+        val todayText = formatMoney(todaySpend)
+        val breakfastText = formatMealMoney(breakfast)
+        val lunchText = formatMealMoney(lunch)
+        val dinnerText = formatMealMoney(dinner)
         val updateTimeText = if (cacheTime == 0L) "--:--" else {
             val cal = java.util.Calendar.getInstance().apply { timeInMillis = cacheTime }
             "%02d:%02d".format(cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE))
@@ -47,7 +47,9 @@ object CampusCardWidgetUpdater {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
-            context, 2001, launchIntent,
+            context,
+            2001,
+            launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -61,6 +63,19 @@ object CampusCardWidgetUpdater {
             views.setTextViewText(R.id.widget_card_update_time, updateTimeText)
             views.setOnClickPendingIntent(R.id.widget_card_root, pendingIntent)
             appWidgetManager.updateAppWidget(id, views)
+        }
+    }
+
+    private fun formatMoney(value: Float): String {
+        return if (value < 0f) "--" else "¥%.2f".format(value)
+    }
+
+    private fun formatMealMoney(value: Float): String {
+        if (value < 0f) return "--"
+        return when {
+            value >= 100f -> "%.0f".format(value)
+            value >= 10f -> "%.1f".format(value)
+            else -> "%.2f".format(value)
         }
     }
 }
