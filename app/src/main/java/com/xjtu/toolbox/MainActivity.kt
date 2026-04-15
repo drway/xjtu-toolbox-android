@@ -126,6 +126,19 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_LAUNCH_ROUTE = "extra_launch_route"
         const val EXTRA_LAUNCH_TAB = "extra_launch_tab"
+
+        /** 版本号比较函数：v1 > v2 返回正数，v1 == v2 返回 0，v1 < v2 返回负数 */
+        fun compareVersionStrings(v1: String, v2: String): Int {
+            val parts1 = v1.split(".").map { it.toIntOrNull() ?: 0 }
+            val parts2 = v2.split(".").map { it.toIntOrNull() ?: 0 }
+            val maxLen = maxOf(parts1.size, parts2.size)
+            for (i in 0 until maxLen) {
+                val p1 = parts1.getOrElse(i) { 0 }
+                val p2 = parts2.getOrElse(i) { 0 }
+                if (p1 != p2) return p1.compareTo(p2)
+            }
+            return 0
+        }
     }
 
     /** 标记应用是否准备好（登录恢复完成后为 true），供 SplashScreen 决定何时消失 */
@@ -188,6 +201,7 @@ object Routes {
     const val SCHOOL_COURSE = "school_course"
     const val SCHOOL_CALENDAR = "school_calendar"
     const val VIDEO_PLAYER = "video_player/{activityId}"
+    const val DOWNLOAD_MANAGER = "download_manager"
     const val BROWSER = "browser?url={url}"
 
     fun login(type: LoginType, target: String) = "login/${type.name}/$target"
@@ -1277,14 +1291,81 @@ fun AppNavigation(
         }
         composable(Routes.CLASS_REPLAY) {
             loginState.classLogin?.let { classLogin ->
+                val context = androidx.compose.ui.platform.LocalContext.current
                 com.xjtu.toolbox.classreplay.ClassScreen(
                     login = classLogin,
                     onBack = { navController.popBackStack() },
                     onPlayReplay = { login, activityId ->
                         navController.navigate(Routes.videoPlayer(activityId))
+                    },
+                    onDownloadReplay = { login, activityIds ->
+                        // 启动下载流程
+                        val appContext = context.applicationContext
+                        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+                        scope.launch {
+                            try {
+                                val downloadManager = com.xjtu.toolbox.classreplay.DownloadManager.getInstance(appContext)
+                                
+                                // 获取课程名称和回放详情
+                                val activities = activityIds.mapNotNull { id ->
+                                    try {
+                                        val detail = com.xjtu.toolbox.classreplay.fetchReplayDetail(login, id)
+                                        detail?.let { id to it }
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("MainActivity", "Failed to fetch detail for $id", e)
+                                        null
+                                    }
+                                }
+                                
+                                val courseName = "课程回放"
+                                
+                                // 为每个活动创建下载任务
+                                for ((activityId, detail) in activities) {
+                                    if (detail.replayVideos.isNotEmpty()) {
+                                        val videos = detail.replayVideos.mapNotNull { video ->
+                                            val realUrl = com.xjtu.toolbox.classreplay.resolveVideoUrl(login, video.url)
+                                            realUrl?.let { video to it }
+                                        }
+                                        
+                                        if (videos.isNotEmpty()) {
+                                            downloadManager.enqueueDownloads(
+                                                courseName = courseName,
+                                                activityTitle = detail.title,
+                                                activityId = activityId,
+                                                videos = videos,
+                                                audioSource = "instructor"
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                // 显示提示
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    android.widget.Toast.makeText(
+                                        appContext,
+                                        "已开始下载 ${activities.size} 个回放",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("MainActivity", "Download error", e)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    android.widget.Toast.makeText(
+                                        context.applicationContext,
+                                        "下载失败: ${e.message}",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
                     }
                 )
             } ?: LaunchedEffect(Unit) { navController.popBackStack() }
+        }
+        composable(Routes.DOWNLOAD_MANAGER) {
+            com.xjtu.toolbox.classreplay.DownloadManagerScreen(
+                onBack = { navController.popBackStack() }
+            )
         }
         composable(Routes.LMS) {
             loginState.lmsLogin?.let { lmsLogin ->
@@ -1576,7 +1657,13 @@ private fun MainScreen(
                                     )
                                     BottomTab.COURSES -> CoursesTab(loginState, ::navigateWithLogin, onNavigateWithNetCheck, scrollBehavior = coursesScrollBehavior)
                                     BottomTab.TOOLS -> ToolsTab(loginState, ::navigateWithLogin, onNavigateWithNetCheck, scrollBehavior = toolsScrollBehavior)
-                                    BottomTab.PROFILE -> ProfileTab(loginState, ::navigateWithLogin, credentialStore, scrollBehavior = profileScrollBehavior)
+                                    BottomTab.PROFILE -> ProfileTab(
+                                        loginState,
+                                        ::navigateWithLogin,
+                                        credentialStore,
+                                        scrollBehavior = profileScrollBehavior,
+                                        onNavigateToDownloads = { navController.navigate(Routes.DOWNLOAD_MANAGER) }
+                                    )
                                 }
                             }
                         }
@@ -2243,7 +2330,13 @@ private fun Modifier.pressOverlay(
 }
 
 @Composable
-private fun ProfileTab(loginState: AppLoginState, onNavigateWithLogin: (String, LoginType) -> Unit, credentialStore: CredentialStore, scrollBehavior: ScrollBehavior? = null) {
+private fun ProfileTab(
+    loginState: AppLoginState,
+    onNavigateWithLogin: (String, LoginType) -> Unit,
+    credentialStore: CredentialStore,
+    scrollBehavior: ScrollBehavior? = null,
+    onNavigateToDownloads: () -> Unit = {}
+) {
     val scope = rememberCoroutineScope()
 
     // 登录表单状态
@@ -2971,6 +3064,50 @@ private fun ProfileTab(loginState: AppLoginState, onNavigateWithLogin: (String, 
                     }
                 }
 
+                Spacer(Modifier.height(12.dp))
+
+                // ━━ 下载记录入口卡片 ━━
+                var downloadStats by remember { mutableStateOf<com.xjtu.toolbox.classreplay.DownloadManager.DownloadStats?>(null) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val downloadManager = com.xjtu.toolbox.classreplay.DownloadManager.getInstance(context)
+                        downloadStats = downloadManager.getDownloadStats()
+                    }
+                }
+                Card(
+                    onClick = onNavigateToDownloads,
+                    modifier = Modifier.fillMaxWidth(),
+                    cornerRadius = 20.dp,
+                    pressFeedbackType = PressFeedbackType.Sink,
+                    colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(color = MiuixTheme.colorScheme.surfaceVariant)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Download, null, Modifier.size(20.dp), tint = MiuixTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("下载记录", style = MiuixTheme.textStyles.body1, fontWeight = FontWeight.Medium)
+                            val stats = downloadStats
+                            if (stats != null) {
+                                val statsText = buildString {
+                                    if (stats.downloadingCount > 0) append("${stats.downloadingCount}个下载中")
+                                    if (stats.completedCount > 0) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append("${stats.completedCount}个已完成")
+                                    }
+                                    if (isEmpty()) append("暂无下载")
+                                }
+                                Text(statsText, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                            } else {
+                                Text("查看下载进度和记录", style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                            }
+                        }
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
 
                 // ━━ 设置区块（网络模式 + 退出登录） ━━
@@ -3134,9 +3271,15 @@ private fun ProfileTab(loginState: AppLoginState, onNavigateWithLogin: (String, 
                                         val json = com.google.gson.JsonParser.parseString(body).asJsonObject
                                         val tagName = json.get("tag_name")?.asString ?: ""
                                         val latestVersion = tagName.removePrefix("v")
-                                        if (latestVersion == BuildConfig.VERSION_NAME) {
+                                        val versionComparison = MainActivity.compareVersionStrings(BuildConfig.VERSION_NAME, latestVersion)
+                                        if (versionComparison > 0) {
+                                            // 本地版本 > 远程版本（抢先预览版）
+                                            updateCheckState = "ahead"
+                                        } else if (versionComparison == 0) {
+                                            // 本地版本 == 远程版本
                                             updateCheckState = "latest"
                                         } else {
+                                            // 本地版本 < 远程版本
                                             updateCheckState = latestVersion
                                             val assets = json.getAsJsonArray("assets")
                                             latestDownloadUrl = if (assets != null && assets.size() > 0)
@@ -3152,6 +3295,7 @@ private fun ProfileTab(loginState: AppLoginState, onNavigateWithLogin: (String, 
                         val (updIcon, updColor) = when {
                             updateCheckState == "checking" -> Icons.Default.Refresh to MiuixTheme.colorScheme.onSurfaceVariantSummary
                             updateCheckState == "latest" -> Icons.Default.CheckCircle to MiuixTheme.colorScheme.primary
+                            updateCheckState == "ahead" -> Icons.Default.AutoAwesome to MiuixTheme.colorScheme.primary
                             updateCheckState?.startsWith("error:") == true -> Icons.Default.ErrorOutline to MiuixTheme.colorScheme.error
                             updateCheckState != null -> Icons.Default.NewReleases to MiuixTheme.colorScheme.primaryVariant
                             else -> Icons.Default.SystemUpdate to MiuixTheme.colorScheme.onSurfaceVariantSummary
@@ -3170,20 +3314,21 @@ private fun ProfileTab(loginState: AppLoginState, onNavigateWithLogin: (String, 
                                 when {
                                     updateCheckState == "checking" -> "检查中…"
                                     updateCheckState == "latest" -> "当前已是最新版本"
+                                    updateCheckState == "ahead" -> "已是抢先预览版本"
                                     updateCheckState?.startsWith("error:") == true -> "检查失败，点击重试"
                                     updateCheckState != null -> "发现新版本 v$updateCheckState"
                                     else -> "当前版本 v${BuildConfig.VERSION_NAME}"
                                 },
                                 style = MiuixTheme.textStyles.body2,
                                 color = when {
-                                    updateCheckState == "latest" -> MiuixTheme.colorScheme.primary
+                                    updateCheckState == "latest" || updateCheckState == "ahead" -> MiuixTheme.colorScheme.primary
                                     updateCheckState?.startsWith("error:") == true -> MiuixTheme.colorScheme.error
-                                    updateCheckState != null && !updateCheckState!!.startsWith("error:") && updateCheckState != "latest" && updateCheckState != "checking" -> MiuixTheme.colorScheme.primaryVariant
+                                    updateCheckState != null && !updateCheckState!!.startsWith("error:") && updateCheckState != "latest" && updateCheckState != "checking" && updateCheckState != "ahead" -> MiuixTheme.colorScheme.primaryVariant
                                     else -> MiuixTheme.colorScheme.onSurfaceVariantSummary
                                 }
                             )
                         }
-                        if (latestDownloadUrl != null && updateCheckState != null && !updateCheckState!!.startsWith("error:") && updateCheckState != "latest" && updateCheckState != "checking") {
+                        if (latestDownloadUrl != null && updateCheckState != null && !updateCheckState!!.startsWith("error:") && updateCheckState != "latest" && updateCheckState != "checking" && updateCheckState != "ahead") {
                             if (isDownloading) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     CircularProgressIndicator(
@@ -3271,7 +3416,7 @@ private fun ProfileTab(loginState: AppLoginState, onNavigateWithLogin: (String, 
                                     Text("下载更新", style = MiuixTheme.textStyles.footnote1, color = MiuixTheme.colorScheme.onPrimary)
                                 }
                             }
-                        } else if (updateCheckState != "checking") {
+                        } else if (updateCheckState != "checking" && updateCheckState != "ahead") {
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp), tint = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.5f))
                         }
                     }
@@ -3762,9 +3907,14 @@ private val CHANGELOGS: Map<String, VersionChangelog> = mapOf(
             "📝" to "补充版本号与更新日志，完善发版信息"
         )
     ),
+    "3.0.1" to VersionChangelog(
+        items = listOf(
+            "🎬" to "新增课程回放下载功能"
+        )
+    ),
     "3.0" to VersionChangelog(
         items = listOf(
-            "🧭" to "导航结构升级：教务 Tab 重构为课程 Tab，首页/小组件统一直达“我的课程”",
+            "🧭" to "导航结构升级：教务 Tab 重构为课程 Tab，首页/小组件统一直达\"我的课程\"",
             "🗓️" to "课程页重构：支持嵌入式无边界头部，学期/Tab 交互与刷新状态提示优化",
             "🧩" to "小组件体系稳定化：课表与校园卡回退 RemoteViews 链路，兼容更多 OEM 桌面",
             "💳" to "校园卡小组件 2×2 紧凑重排，金额显示与三餐布局优化，减少溢出与加载异常",

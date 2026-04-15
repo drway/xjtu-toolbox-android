@@ -1,0 +1,21 @@
+
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/MainActivity.kt:3053
+:32 Unresolved reference 'navController'.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/ClassScr
+een.kt:775:21 Unresolved reference 'RadioButton'.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+Manager.kt:71:29 Unresolved reference 'Semaphore'.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+Manager.kt:205:24 None of the following candidates is applicable:
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+ManagerScreen.kt:130:39 Unresolved reference 'DownloadOff'.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+ManagerScreen.kt:275:25 No parameter with name 'contentColor' found.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+ManagerScreen.kt:454:33 No parameter with name 'contentColor' found.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+ManagerScreen.kt:469:33 No parameter with name 'contentColor' found.
+e: file:///D:/Sun_jc/Desktop/xjtu-toolbox-android/app/src/main/java/com/xjtu/toolbox/classreplay/Download
+ManagerScreen.kt:479:33 No parameter with name 'contentColor' found.
+
+

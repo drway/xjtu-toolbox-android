@@ -10,10 +10,16 @@ import android.content.Context
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -22,18 +28,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xjtu.toolbox.ui.components.AppFilterChip
-import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.extra.SuperBottomSheet
+import top.yukonga.miuix.kmp.extra.SuperDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
@@ -47,7 +55,8 @@ private const val TAG = "ClassScreen"
 fun ClassScreen(
     login: ClassLogin,
     onBack: () -> Unit,
-    onPlayReplay: (login: ClassLogin, activityId: Int) -> Unit
+    onPlayReplay: (login: ClassLogin, activityId: Int) -> Unit,
+    onDownloadReplay: (login: ClassLogin, activityIds: List<Int>) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     // 页面导航状态
@@ -114,7 +123,8 @@ fun ClassScreen(
                 login = login,
                 course = course,
                 onBack = { selectedCourse = null },
-                onPlayReplay = onPlayReplay
+                onPlayReplay = onPlayReplay,
+                onDownloadReplay = onDownloadReplay
             )
         }
     }
@@ -363,14 +373,23 @@ private fun ReplayListPage(
     login: ClassLogin,
     course: Course,
     onBack: () -> Unit,
-    onPlayReplay: (login: ClassLogin, activityId: Int) -> Unit
+    onPlayReplay: (login: ClassLogin, activityId: Int) -> Unit,
+    onDownloadReplay: (login: ClassLogin, activityIds: List<Int>) -> Unit
 ) {
     var activities by remember { mutableStateOf<List<LiveActivity>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    // 一次性加载所有活动（仅已关闭的）
+    // 多选模式状态
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedActivities = remember { mutableStateListOf<Int>() }
+
+    // 下载配置状态
+    var selectedVideoSources by remember { mutableStateOf<Set<String>>(setOf("instructor")) }
+    var selectedAudioSource by remember { mutableStateOf("instructor") }
+
+    // 加载回放列表
     fun loadAllActivities() {
         scope.launch {
             isLoading = true
@@ -382,7 +401,6 @@ private fun ReplayListPage(
                     val (list, total) = withContext(Dispatchers.IO) {
                         fetchLiveActivities(login, course.id, page = page, pageSize = 50)
                     }
-                    // 仅保留已结束的活动（排除待开始/进行中/生成中）
                     result.addAll(list.filter { it.isClosed })
                     if (result.size + list.count { !it.isClosed } >= total || list.isEmpty()) break
                     page++
@@ -399,17 +417,80 @@ private fun ReplayListPage(
 
     LaunchedEffect(Unit) { loadAllActivities() }
 
+    // 退出选择模式时清空
+    DisposableEffect(isSelectionMode) {
+        onDispose {
+            if (!isSelectionMode) selectedActivities.clear()
+        }
+    }
+
     Scaffold(
         topBar = {
-            SmallTopAppBar(
-                title = course.displayName,
-                color = MiuixTheme.colorScheme.surfaceVariant,
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            if (isSelectionMode) {
+                // 选择模式 TopAppBar
+                SmallTopAppBar(
+                    title = "下载课程回放",
+                    color = MiuixTheme.colorScheme.surfaceVariant,
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            isSelectionMode = false
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "取消选择")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            val allIds = activities.map { it.id }.toSet()
+                            val allSelected = selectedActivities.containsAll(allIds)
+                            selectedActivities.clear()
+                            if (!allSelected) {
+                                selectedActivities.addAll(allIds)
+                            }
+                        }) {
+                            Icon(Icons.Default.SelectAll, contentDescription = "全选/取消")
+                        }
                     }
-                }
-            )
+                )
+            } else {
+                // 普通模式 TopAppBar
+                SmallTopAppBar(
+                    title = course.displayName,
+                    color = MiuixTheme.colorScheme.surfaceVariant,
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { 
+                            isSelectionMode = true
+                            selectedActivities.clear()
+                        }) {
+                            Icon(Icons.Default.Download, contentDescription = "下载")
+                        }
+                    }
+                )
+            }
+        },
+        bottomBar = {
+            if (isSelectionMode) {
+                // 底栏 - 类似微信选图片
+                DownloadBottomBar(
+                    selectedCount = selectedActivities.size,
+                    totalCount = activities.size,
+                    selectedVideoSources = selectedVideoSources,
+                    onVideoSourcesChanged = { selectedVideoSources = it },
+                    selectedAudioSource = selectedAudioSource,
+                    onAudioSourceChanged = { selectedAudioSource = it },
+                    onDownload = {
+                        if (selectedActivities.isNotEmpty() && selectedVideoSources.isNotEmpty()) {
+                            onDownloadReplay(login, selectedActivities.toList())
+                            isSelectionMode = false
+                        }
+                    },
+                    enabled = selectedActivities.isNotEmpty() && selectedVideoSources.isNotEmpty()
+                )
+            }
         }
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
@@ -474,9 +555,29 @@ private fun ReplayListPage(
                             )
                         }
                         items(activities, key = { it.id }) { activity ->
-                            ActivityCard(activity) {
-                                onPlayReplay(login, activity.id)
-                            }
+                            ActivityCard(
+                                activity = activity,
+                                isSelectionMode = isSelectionMode,
+                                isSelected = selectedActivities.contains(activity.id),
+                                onToggleSelection = {
+                                    if (selectedActivities.contains(activity.id)) {
+                                        selectedActivities.remove(activity.id)
+                                    } else {
+                                        selectedActivities.add(activity.id)
+                                    }
+                                },
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        if (selectedActivities.contains(activity.id)) {
+                                            selectedActivities.remove(activity.id)
+                                        } else {
+                                            selectedActivities.add(activity.id)
+                                        }
+                                    } else {
+                                        onPlayReplay(login, activity.id)
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -486,7 +587,13 @@ private fun ReplayListPage(
 }
 
 @Composable
-private fun ActivityCard(activity: LiveActivity, onClick: () -> Unit) {
+private fun ActivityCard(
+    activity: LiveActivity,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelection: () -> Unit = {},
+    onClick: () -> Unit
+) {
     Card(
         onClick = onClick,
         pressFeedbackType = PressFeedbackType.Sink,
@@ -498,10 +605,40 @@ private fun ActivityCard(activity: LiveActivity, onClick: () -> Unit) {
             Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 选择模式显示 Checkbox（左侧，类似选课算GPA）
+            if (isSelectionMode) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable { onToggleSelection() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            Icons.Default.CheckBox,
+                            contentDescription = null,
+                            tint = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .border(
+                                    2.dp,
+                                    MiuixTheme.colorScheme.outline,
+                                    androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                                )
+                        )
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+
             Icon(
                 Icons.Default.PlayCircle,
                 contentDescription = null,
-                tint = MiuixTheme.colorScheme.primary,
+                tint = if (isSelectionMode && isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 modifier = Modifier.size(36.dp)
             )
             Spacer(Modifier.width(12.dp))
@@ -556,3 +693,158 @@ private fun formatDateRange(start: String?, end: String?): String {
     val e = end?.replace("-", "/")
     return if (e != null) "$s ~ $e" else "$s 起"
 }
+
+// ════════════════════════════════════════
+//  底栏 - 下载配置（类似微信选图片）
+// ════════════════════════════════════════
+
+@Composable
+private fun DownloadBottomBar(
+    selectedCount: Int,
+    totalCount: Int,
+    selectedVideoSources: Set<String>,
+    onVideoSourcesChanged: (Set<String>) -> Unit,
+    selectedAudioSource: String,
+    onAudioSourceChanged: (String) -> Unit,
+    onDownload: () -> Unit,
+    enabled: Boolean
+) {
+    var showVideoSourcePicker by remember { mutableStateOf(false) }
+    var showAudioSourcePicker by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier
+            .navigationBarsPadding()
+            .background(MiuixTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            // 视频源选择行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("视频源", style = MiuixTheme.textStyles.body2, fontWeight = FontWeight.Medium, modifier = Modifier.width(56.dp))
+                
+                // 视频源 chips
+                listOf(
+                    "instructor" to "教师直播",
+                    "encoder" to "电脑屏幕"
+                ).forEach { (value, label) ->
+                    val isSelected = selectedVideoSources.contains(value)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isSelected) MiuixTheme.colorScheme.primary.copy(alpha = 0.12f) else MiuixTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.clickable {
+                            val newSet = if (isSelected) {
+                                selectedVideoSources - value
+                            } else {
+                                selectedVideoSources + value
+                            }
+                            onVideoSourcesChanged(newSet)
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Default.CheckBox,
+                                    contentDescription = null,
+                                    tint = MiuixTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            Text(
+                                label,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // 音频源选择行（横向滚动）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("音频源", style = MiuixTheme.textStyles.body2, fontWeight = FontWeight.Medium, modifier = Modifier.width(56.dp).wrapContentWidth(Alignment.End))
+                Spacer(Modifier.width(8.dp))
+                
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        "instructor" to "教师音频",
+                        "encoder" to "电脑音频",
+                        "both" to "双音轨",
+                        "mute" to "静音"
+                    ).forEach { (value, label) ->
+                        val isSelected = selectedAudioSource == value
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) MiuixTheme.colorScheme.primary.copy(alpha = 0.12f) else MiuixTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.clickable { onAudioSourceChanged(value) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (isSelected) {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .background(MiuixTheme.colorScheme.primary, androidx.compose.foundation.shape.CircleShape)
+                                    )
+                                } else {
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .border(
+                                                1.5.dp,
+                                                MiuixTheme.colorScheme.outline,
+                                                androidx.compose.foundation.shape.CircleShape
+                                            )
+                                    )
+                                }
+                                Text(
+                                    label,
+                                    style = MiuixTheme.textStyles.footnote1,
+                                    color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // 下载按钮
+            Button(
+                onClick = onDownload,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("下载 $selectedCount 个视频")
+            }
+        }
+    }
+}
+
+
