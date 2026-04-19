@@ -63,7 +63,7 @@ private fun syncCookiesToWebView(login: XJTULogin?) {
             val domains = listOf(
                 "login.xjtu.edu.cn", "cas.xjtu.edu.cn", "org.xjtu.edu.cn",
                 "jwxt.xjtu.edu.cn", "ywtb.xjtu.edu.cn", "bkkq.xjtu.edu.cn",
-                "card.xjtu.edu.cn", "rg.lib.xjtu.edu.cn", "jwapp.xjtu.edu.cn",
+                "ncard.xjtu.edu.cn", "rg.lib.xjtu.edu.cn", "jwapp.xjtu.edu.cn",
                 "webvpn.xjtu.edu.cn"
             )
             var count = 0
